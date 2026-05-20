@@ -1,0 +1,36 @@
+# Build outputs
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+
+# User-specific files
+*.user
+*.suo
+*.rsuser
+
+# Logs
+*.log
+Logs/
+logs/
+
+# Local secrets/config
+appsettings.local.json
+*.local.json
+.env
+
+# Publish outputs
+publish/
+artifacts/
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# OS files
+.DS_Store
+Thumbs.db
