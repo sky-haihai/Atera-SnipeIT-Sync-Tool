@@ -7,6 +7,7 @@
 测试目标：
 
 - `InventoryMapper` 可以把 `AteraPullResult` 转换为 `SnipeImportBatch`
+- representative `AteraPullResult` 可以适配成 Snipe-IT Import 模块消费的 batch
 - serial number 优先作为 `AssetTag`
 - serial 缺失时 fallback 到 `ATERA-{AgentID}`
 - company / manufacturer / model 缺失时使用 `MappingOptions` 默认值
@@ -20,6 +21,7 @@
 
 ```text
 tests/AteraSnipeSync.Tests/Mapping/InventoryMapperTests.cs
+tests/AteraSnipeSync.Tests/Mapping/ReconstructionBoundaryTests.cs
 ```
 
 生产代码位于：
@@ -37,6 +39,24 @@ dotnet build AteraSnipeSync.sln --no-restore
 dotnet test AteraSnipeSync.sln --no-build
 ```
 
+只运行 Reconstruction 相关测试：
+
+```powershell
+dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "FullyQualifiedName~AteraSnipeSync.Tests.Mapping"
+```
+
+只运行 Reconstruction boundary test class：
+
+```powershell
+dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "FullyQualifiedName~ReconstructionBoundaryTests"
+```
+
+只运行 representative Atera pull result 到 Snipe import batch 的边界测试：
+
+```powershell
+dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "FullyQualifiedName~Map_ProducesSnipeImportBatchFromRepresentativeAteraPullResult"
+```
+
 如果依赖尚未 restore，先运行：
 
 ```powershell
@@ -47,13 +67,15 @@ dotnet restore AteraSnipeSync.sln
 
 Module2 是纯逻辑模块，不调用外部 API，不读写文件，不需要 mock HTTP client。
 
-测试直接构造：
+unit tests 直接构造：
 
 - `AteraPullResult`
 - `AteraAgentDto`
 - `MappingOptions`
 
-不使用 fixture JSON，避免把 Atera API wire shape 固化在 Module2 测试中。
+boundary test 也直接构造 representative `AteraPullResult`，验证它能映射为 `SnipeImportBatch`。
+
+不使用 fixture JSON，避免把 Atera API wire shape 固化在 Module2 测试中。真实 Atera API response JSON 应在 Module1 Atera Pull 实现时，查阅官方 Atera API 文档后再写 contract tests。
 
 ## 5. 常见失败原因
 
