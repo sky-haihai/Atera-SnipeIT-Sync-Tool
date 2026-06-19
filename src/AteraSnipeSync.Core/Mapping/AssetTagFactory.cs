@@ -4,7 +4,7 @@ namespace AteraSnipeSync.Core.Mapping;
 
 internal static class AssetTagFactory
 {
-    public static string Create(AteraAgentDto agent)
+    public static string Create(AgentInfo agent)
     {
         var serial = InventoryMapper.Normalize(agent.SerialNumber);
 

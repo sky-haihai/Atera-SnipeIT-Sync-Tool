@@ -4,6 +4,9 @@ using AteraSnipeSync.Core.SnipeIt;
 
 namespace AteraSnipeSync.Core.Mapping;
 
+/// <summary>
+/// Converts pulled Atera agents into Snipe-IT import records without calling external systems.
+/// </summary>
 public sealed class InventoryMapper : IInventoryMapper
 {
     public SnipeImportBatch Map(
@@ -40,6 +43,7 @@ public sealed class InventoryMapper : IInventoryMapper
                 AssetTag = assetTag,
                 Name = name,
                 Serial = serial,
+                MacAddresses = agent.MacAddresses,
                 CompanyName = MappingValueResolver.ResolveCompanyName(agent, options, warnings),
                 ManufacturerName = MappingValueResolver.ResolveManufacturerName(agent, options, warnings),
                 ModelName = MappingValueResolver.ResolveModelName(agent, options, warnings),

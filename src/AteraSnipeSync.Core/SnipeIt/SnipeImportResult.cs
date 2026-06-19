@@ -2,6 +2,9 @@ using AteraSnipeSync.Core.Common;
 
 namespace AteraSnipeSync.Core.SnipeIt;
 
+/// <summary>
+/// Reports the structured outcome of a Snipe-IT import run for orchestration and status reporting.
+/// </summary>
 public sealed class SnipeImportResult
 {
     public required int CreatedAssets { get; init; }

@@ -4,6 +4,9 @@ using AteraSnipeSync.Core.SnipeIt;
 
 namespace AteraSnipeSync.Core.Sync;
 
+/// <summary>
+/// Reports the full outcome of one orchestrated sync run, including stage outputs and aggregated diagnostics.
+/// </summary>
 public sealed class SyncRunResult
 {
     public required bool Success { get; init; }

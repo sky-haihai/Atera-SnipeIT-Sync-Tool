@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snipe-IT Import 实现规格复习</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #5c6670;
+      --line: #d9e2ec;
+      --panel: #f8fafc;
+      --accent: #256f77;
+      --accent-soft: #e1f3f4;
+      --warn: #8a5a00;
+      --warn-soft: #fff5d6;
+      --good: #1d6b42;
+      --bad: #9f2d2d;
+      --white: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--white);
+      line-height: 1.55;
+    }
+
+    header {
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f4f8fb 100%);
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 42px 0 32px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(30px, 4vw, 46px);
+      line-height: 1.12;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 44px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 0.95em;
+      background: #eef2f6;
+      border: 1px solid #d7dee7;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .subtitle {
+      max-width: 850px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 3px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #ffffff;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    main {
+      padding: 4px 0 52px;
+    }
+
+    .notice {
+      margin-top: 22px;
+      padding: 14px 16px;
+      border: 1px solid #efd27a;
+      border-left: 5px solid #c58b00;
+      background: var(--warn-soft);
+      color: #4f3900;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 15px;
+    }
+
+    .card p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 14px 0 24px;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--line);
+      padding: 10px 12px;
+      vertical-align: top;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      background: #eef6f7;
+      color: #143f45;
+      font-weight: 650;
+    }
+
+    td {
+      background: #ffffff;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      gap: 10px;
+      margin: 18px 0 26px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .step {
+      position: relative;
+      min-height: 122px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 12px;
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -10px;
+      width: 10px;
+      height: 1px;
+      background: var(--line);
+    }
+
+    .step:last-child::after {
+      display: none;
+    }
+
+    .num {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      margin-bottom: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .step b {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .step span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .decision {
+      border-left: 5px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 14px 16px;
+      margin: 14px 0 22px;
+    }
+
+    .status-ok {
+      color: var(--good);
+      font-weight: 650;
+    }
+
+    .status-risk {
+      color: var(--warn);
+      font-weight: 650;
+    }
+
+    .status-stop {
+      color: var(--bad);
+      font-weight: 650;
+    }
+
+    ul {
+      margin: 8px 0 18px 22px;
+      padding: 0;
+    }
+
+    li {
+      margin: 5px 0;
+    }
+
+    footer {
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      padding: 20px 0 34px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 820px) {
+      .wrap {
+        width: min(100% - 24px, 1120px);
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+        table-layout: auto;
+      }
+
+      .flow {
+        grid-template-columns: repeat(6, 180px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap hero">
+      <h1>Snipe-IT Import 实现规格复习</h1>
+      <p class="subtitle">
+        这份 HTML 把当前项目中已确认的 Snipe-IT Import 边界、比较逻辑和导入流程整理成实现前检查表。
+        它依据总策划案、Reconstruction 技术规格和现有 Core contract；专属 Snipe Import 功能职责/技术规格目前仍是占位稿。
+      </p>
+      <div class="meta">
+        <span class="pill">模块：03-SnipeImport</span>
+        <span class="pill">状态：规格待补齐</span>
+        <span class="pill">当前产物：流程复习页</span>
+        <span class="pill">更新日期：2026-06-17</span>
+      </div>
+      <div class="notice">
+        实现前必须查阅官方 Snipe-IT API 文档。本文不写死 endpoint、payload 字段、认证 header、分页或错误 body 形状；这些内容必须在正式技术规格阶段核验后再落地。
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>1. 文档现状</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>文档</th>
+            <th>当前状态</th>
+            <th>对实现的影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>docs/module-plans/03-SnipeImport-功能职责.md</code></td>
+            <td><span class="status-risk">只有标题</span></td>
+            <td>按项目流程，正式实现前必须先补齐模块边界：目标、输入、输出、失败条件、排除职责、扩展点。</td>
+          </tr>
+          <tr>
+            <td><code>docs/technical-specs/03-SnipeImport-技术规格.md</code></td>
+            <td><span class="status-risk">只有标题</span></td>
+            <td>不能直接生成 importer production code；需要先写清类、接口、方法签名、数据流、HTTP adapter、测试要求。</td>
+          </tr>
+          <tr>
+            <td><code>docs/test-guides/03-SnipeImport-单元测试指导手册.md</code></td>
+            <td><span class="status-risk">只有标题</span></td>
+            <td>应在 production code 和 tests 完成后补写，描述 mocked HTTP 策略、命令、覆盖点和常见失败原因。</td>
+          </tr>
+          <tr>
+            <td><code>docs/AteraSnipeSync_AI_Agent_Master_Plan.md</code></td>
+            <td><span class="status-ok">已有模块级蓝图</span></td>
+            <td>可作为 Snipe Import 功能职责和技术规格的来源之一，但不能替代官方 API 文档核验。</td>
+          </tr>
+          <tr>
+            <td><code>src/AteraSnipeSync.Core/SnipeIt/</code></td>
+            <td><span class="status-ok">已有 scaffold contract</span></td>
+            <td>已有 <code>ISnipeImporter</code>、<code>SnipeImportOptions</code>、<code>SnipeImportResult</code> 等合同；尚无真实 importer 实现。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>2. 模块责任边界</h2>
+      <div class="grid">
+        <article class="card">
+          <strong>输入</strong>
+          <p><code>SnipeImportBatch</code>、Snipe-IT API configuration、<code>SnipeImportOptions</code>。</p>
+        </article>
+        <article class="card">
+          <strong>输出</strong>
+          <p><code>SnipeImportResult</code>，包含 created/updated/skipped/failed 计数、actions、failures、warnings。</p>
+        </article>
+        <article class="card">
+          <strong>核心职责</strong>
+          <p>确保 company、asset model、hardware asset 存在；根据比较结果创建或更新 asset。</p>
+        </article>
+      </div>
+
+      <h3>明确不属于本模块</h3>
+      <ul>
+        <li>不从 Atera 拉数据。</li>
+        <li>不执行 Atera 到 Snipe-IT 的字段 mapping。</li>
+        <li>不决定 sync schedule。</li>
+        <li>不写 <code>status.json</code> 或其它状态存储。</li>
+        <li>不负责发送 email 或 UI 展示。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>3. 已有 Contract 复习</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Contract</th>
+            <th>关键字段/方法</th>
+            <th>实现含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ISnipeImporter</code></td>
+            <td><code>ImportAsync(batch, options, cancellationToken)</code></td>
+            <td>模块唯一对外入口。调用者不应绕过它直接操作 Snipe-IT API。</td>
+          </tr>
+          <tr>
+            <td><code>SnipeImportOptions</code></td>
+            <td><code>BaseUrl</code>, <code>ApiToken</code>, <code>DryRun</code>, <code>CreateMissingCompanies</code>, <code>CreateMissingModels</code></td>
+            <td>控制目标实例、认证、是否执行写入、是否允许自动创建依赖对象。</td>
+          </tr>
+          <tr>
+            <td><code>SnipeAssetImportRecord</code></td>
+            <td><code>AssetTag</code>, <code>Name</code>, <code>Serial</code>, <code>CompanyName</code>, <code>ManufacturerName</code>, <code>ModelName</code>, <code>CategoryName</code>, <code>StatusId</code>, <code>Notes</code></td>
+            <td>由 Reconstruction 生成，是 Import 模块消费的标准资产输入，不应在 Import 模块重新做 Atera mapping。</td>
+          </tr>
+          <tr>
+            <td><code>SnipeImportResult</code></td>
+            <td><code>CreatedAssets</code>, <code>UpdatedAssets</code>, <code>SkippedAssets</code>, <code>FailedAssets</code>, <code>CreatedCompanies</code>, <code>CreatedModels</code>, <code>DryRun</code>, <code>Actions</code>, <code>Failures</code>, <code>Warnings</code></td>
+            <td>所有导入决策和失败都要结构化返回，不能只写 log 或返回文本。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. Snipe-IT 比较逻辑</h2>
+      <p>
+        “比较”指把一个 <code>SnipeAssetImportRecord</code> 与 Snipe-IT 现有数据进行查找和决策。
+        当前总策划案定义的资产身份优先级是：先按 serial 查找，找不到时再按 generated asset tag 查找。
+      </p>
+
+      <div class="decision">
+        资产查找顺序：<code>Serial</code> 存在时优先查 serial；未命中或 serial 不存在时，使用 <code>AssetTag</code> 作为 fallback identity。
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>比较对象</th>
+            <th>查找键</th>
+            <th>命中时</th>
+            <th>未命中时</th>
+            <th>注意事项</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Company</td>
+            <td><code>CompanyName</code></td>
+            <td>复用已存在 company。</td>
+            <td>若 <code>CreateMissingCompanies</code> 为 true，则计划创建；否则该资产应跳过或失败。</td>
+            <td>实际 search/create endpoint、唯一性规则、返回 body 必须查官方文档。</td>
+          </tr>
+          <tr>
+            <td>Asset Model</td>
+            <td><code>ManufacturerName</code> + <code>ModelName</code> + <code>CategoryName</code></td>
+            <td>复用已存在 model。</td>
+            <td>若 <code>CreateMissingModels</code> 为 true，则计划创建；否则该资产应跳过或失败。</td>
+            <td>manufacturer/category/model 的依赖关系需要在技术规格中写清。</td>
+          </tr>
+          <tr>
+            <td>Hardware Asset</td>
+            <td>优先 <code>Serial</code>，fallback <code>AssetTag</code></td>
+            <td>更新 asset。</td>
+            <td>创建新的 hardware asset。</td>
+            <td>如果 serial 和 asset tag 命中不同 asset，技术规格必须定义冲突处理策略。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>资产决策表</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Serial 查找</th>
+            <th>AssetTag 查找</th>
+            <th>导入动作</th>
+            <th>Result 影响</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>命中</td>
+            <td>不需要</td>
+            <td>Update hardware asset</td>
+            <td><code>UpdatedAssets += 1</code>，记录 <code>ImportAction</code>。</td>
+          </tr>
+          <tr>
+            <td>未命中</td>
+            <td>命中</td>
+            <td>Update hardware asset using fallback identity</td>
+            <td><code>UpdatedAssets += 1</code>，action message 应说明 fallback。</td>
+          </tr>
+          <tr>
+            <td>未提供</td>
+            <td>命中</td>
+            <td>Update hardware asset using asset tag</td>
+            <td><code>UpdatedAssets += 1</code>，可附带 warning 说明 serial 缺失。</td>
+          </tr>
+          <tr>
+            <td>未命中或未提供</td>
+            <td>未命中</td>
+            <td>Create hardware asset</td>
+            <td><code>CreatedAssets += 1</code>，记录创建动作。</td>
+          </tr>
+          <tr>
+            <td>命中 A</td>
+            <td>命中 B，且 A 与 B 不同</td>
+            <td><span class="status-stop">规格待定：建议失败并人工处理</span></td>
+            <td><code>FailedAssets += 1</code>，记录 <code>ImportFailure</code>，避免错误合并资产。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>5. 导入流程</h2>
+      <div class="flow" aria-label="Snipe-IT import flow">
+        <div class="step">
+          <span class="num">1</span>
+          <b>接收 Batch</b>
+          <span>验证 <code>batch</code>、<code>options</code> 和 cancellation token。</span>
+        </div>
+        <div class="step">
+          <span class="num">2</span>
+          <b>逐条处理 Asset</b>
+          <span>读取 Reconstruction 已生成的 <code>SnipeAssetImportRecord</code>。</span>
+        </div>
+        <div class="step">
+          <span class="num">3</span>
+          <b>Ensure Company</b>
+          <span>查找 company；按 option 决定是否创建缺失 company。</span>
+        </div>
+        <div class="step">
+          <span class="num">4</span>
+          <b>Ensure Model</b>
+          <span>查找 manufacturer/model/category 组合；按 option 决定是否创建缺失 model。</span>
+        </div>
+        <div class="step">
+          <span class="num">5</span>
+          <b>Compare Asset</b>
+          <span>按 serial，再按 asset tag fallback 查找硬件资产。</span>
+        </div>
+        <div class="step">
+          <span class="num">6</span>
+          <b>Create / Update</b>
+          <span>dry-run 只记录动作；非 dry-run 执行写入并解析响应。</span>
+        </div>
+      </div>
+
+      <h3>每条资产的建议处理顺序</h3>
+      <ol>
+        <li>如果 <code>DryRun</code> 为 true，仍执行必要的只读比较，以产生 planned actions；不执行 create/update 写入。</li>
+        <li>确认 company。缺失且不允许创建时，不继续 asset create/update，返回 skipped 或 failure，具体分类需在技术规格中固定。</li>
+        <li>确认 asset model。缺失且不允许创建时，不继续 asset create/update。</li>
+        <li>按 serial 查找 asset；如果 serial 缺失或未命中，再按 asset tag 查找。</li>
+        <li>命中现有 asset 时更新；两个身份命中不同资产时不要自动选择，建议记录失败。</li>
+        <li>未命中任何 asset 时创建。</li>
+        <li>读取 Snipe-IT JSON response body；即使 HTTP status 是 200，也要识别 body 中表示失败的 payload。</li>
+        <li>把每个动作、失败和 warning 汇总到 <code>SnipeImportResult</code>。</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>6. Dry-Run 行为</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>Dry-run 应做</th>
+            <th>Dry-run 不应做</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>比较阶段</td>
+            <td>可以执行只读查询，计算将会创建/更新/跳过哪些目标。</td>
+            <td>不应修改 Snipe-IT 中任何 company、model 或 asset。</td>
+          </tr>
+          <tr>
+            <td>依赖对象</td>
+            <td>记录 planned company/model create actions，<code>WasExecuted = false</code>。</td>
+            <td>不应真的创建缺失 company/model。</td>
+          </tr>
+          <tr>
+            <td>资产</td>
+            <td>记录 planned asset create/update actions，保留 target name 和说明。</td>
+            <td>不应发送任何 create/update 请求。</td>
+          </tr>
+          <tr>
+            <td>结果</td>
+            <td><code>DryRun = true</code>；actions 表示计划动作；计数语义需要在技术规格中固定为 planned counts 或 executed counts。</td>
+            <td>不应让调用者误以为写入已经执行。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>7. 错误与结果聚合</h2>
+      <ul>
+        <li>HTTP request 失败、取消、超时、认证失败、response body 无法解析，都应转换为结构化 failure 或抛出规格定义的异常。</li>
+        <li>官方文档确认前，不应假设 Snipe-IT 的错误字段名、分页字段名或成功/失败 body 形状。</li>
+        <li><code>ImportFailure</code> 至少记录 <code>TargetType</code>、<code>TargetName</code>、<code>Message</code>、可选 <code>Code</code>。</li>
+        <li><code>ImportAction</code> 应记录动作类型、目标类型、目标名称、是否执行、可选说明。</li>
+        <li>batch 自带 warnings 应并入最终 <code>SnipeImportResult.Warnings</code>，Import 模块新增 warning 也要保留来源。</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>8. 正式技术规格待补问题</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>问题</th>
+            <th>为什么必须定下来</th>
+            <th>来源要求</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Snipe-IT authentication header 具体格式</td>
+            <td>影响 HTTP client、测试 mock 和安全日志策略。</td>
+            <td>官方 Snipe-IT API 文档。</td>
+          </tr>
+          <tr>
+            <td>company/model/asset 的 search endpoint、query 参数和分页规则</td>
+            <td>影响比较结果准确性和性能。</td>
+            <td>官方 Snipe-IT API 文档。</td>
+          </tr>
+          <tr>
+            <td>create/update payload 字段名与 required fields</td>
+            <td>不能凭内部 contract 直接推断 wire shape。</td>
+            <td>官方 Snipe-IT API 文档。</td>
+          </tr>
+          <tr>
+            <td>200 OK 但 body 表示失败的响应格式</td>
+            <td>总策划案明确要求识别这种失败。</td>
+            <td>官方文档或 sanitized sample payload。</td>
+          </tr>
+          <tr>
+            <td>serial 命中和 asset tag 命中不同 asset 的冲突策略</td>
+            <td>避免误更新错误资产。</td>
+            <td>项目技术规格决策；建议默认失败并人工处理。</td>
+          </tr>
+          <tr>
+            <td>Dry-run 计数语义</td>
+            <td>要明确 created/updated counts 表示 planned 还是 executed。</td>
+            <td>项目技术规格决策。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>9. 实现前检查清单</h2>
+      <ul>
+        <li>先补 <code>03-SnipeImport-功能职责.md</code>，确认边界和失败策略。</li>
+        <li>查官方 Snipe-IT API 文档，再写 <code>03-SnipeImport-技术规格.md</code>。</li>
+        <li>技术规格中定义 concrete classes：HTTP client adapter、response parser、company/model/asset ensure services、importer orchestrator。</li>
+        <li>所有自动化测试必须使用 mocked HTTP handler、fake client 或 sanitized fixtures；不得调用真实 Snipe-IT API。</li>
+        <li>如果需要真实 key 验证，只能写 manual-only 步骤，并明确不打印、不记录、不提交 API token。</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      来源：项目总策划案、Reconstruction 技术规格、现有 <code>AteraSnipeSync.Core.SnipeIt</code> contract。本文为实现规格复习，不是最终 API 技术规格。
+    </div>
+  </footer>
+</body>
+</html>

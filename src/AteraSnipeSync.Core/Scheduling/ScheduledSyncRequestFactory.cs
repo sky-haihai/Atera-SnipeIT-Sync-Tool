@@ -1,0 +1,41 @@
+using AteraSnipeSync.Core.SnipeIt;
+using AteraSnipeSync.Core.Sync;
+
+namespace AteraSnipeSync.Core.Scheduling;
+
+/// <summary>
+/// Produces scheduler-safe sync requests by marking the run as scheduled and disabling manual preflight CSV output.
+/// </summary>
+public static class ScheduledSyncRequestFactory
+{
+    /// <summary>
+    /// Clones a base sync request for unattended execution and guarantees that no manual preflight CSV is generated.
+    /// </summary>
+    public static SyncRunRequest CreateScheduledRequest(SyncRunRequest baseRequest)
+    {
+        ArgumentNullException.ThrowIfNull(baseRequest);
+
+        return new SyncRunRequest
+        {
+            Atera = baseRequest.Atera,
+            Mapping = baseRequest.Mapping,
+            SnipeIt = new SnipeImportOptions
+            {
+                BaseUrl = baseRequest.SnipeIt.BaseUrl,
+                ApiToken = baseRequest.SnipeIt.ApiToken,
+                DryRun = baseRequest.SnipeIt.DryRun,
+                CreateMissingCompanies = baseRequest.SnipeIt.CreateMissingCompanies,
+                CreateMissingModels = baseRequest.SnipeIt.CreateMissingModels,
+                MacAddressCustomFieldDbColumnName = baseRequest.SnipeIt.MacAddressCustomFieldDbColumnName,
+                NameMatchThreshold = baseRequest.SnipeIt.NameMatchThreshold,
+                ManualPreflightCsvEnabled = false,
+                ManualPreflightCsvDirectory = null
+            },
+            Sync = new SyncRunOptions
+            {
+                DryRun = baseRequest.Sync.DryRun,
+                TriggeredBy = "scheduled"
+            }
+        };
+    }
+}

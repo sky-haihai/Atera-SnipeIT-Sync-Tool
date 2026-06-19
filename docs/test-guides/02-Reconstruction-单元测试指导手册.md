@@ -70,16 +70,16 @@ Module2 是纯逻辑模块，不调用外部 API，不读写文件，不需要 m
 unit tests 直接构造：
 
 - `AteraPullResult`
-- `AteraAgentDto`
+- `AgentInfo`
 - `MappingOptions`
 
 boundary test 也直接构造 representative `AteraPullResult`，验证它能映射为 `SnipeImportBatch`。
 
-不使用 fixture JSON，避免把 Atera API wire shape 固化在 Module2 测试中。真实 Atera API response JSON 应在 Module1 Atera Pull 实现时，查阅官方 Atera API 文档后再写 contract tests。
+不使用 fixture JSON，避免把 Atera API wire shape 固化在 Module2 测试中。真实 Atera API response 不得进入自动化测试；Module1 Atera Pull 的 wire behavior 测试应使用官方文档形状和 mocked HTTP。
 
 ## 5. 常见失败原因
 
-- `AteraAgentDto.AgentId` 或 `Name` 是 required property，测试 helper 必须赋值
+- `AgentInfo.AgentId` 或 `Name` 是 required property，测试 helper 必须赋值
 - warning code 必须与技术规格一致
 - missing serial 但 agent id 存在时应生成 asset，不应跳过
 - serial 和 agent id 都缺失时应跳过 asset，并输出 `MissingAgentIdentity`

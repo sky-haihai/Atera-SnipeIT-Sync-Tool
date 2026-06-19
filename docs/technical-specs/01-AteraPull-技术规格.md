@@ -23,30 +23,49 @@ Atera Pull Module 负责通过 Atera API 拉取所有可同步设备，并输出
 已确认的官方/官方支持信息：
 
 - Atera API 文档入口：`https://app.atera.com/apidocs`
-- Atera 支持文档说明设备数据可通过 `GET /api/v3/agents` 或 `GET /api/v3/devices` 获取
-- Atera 支持文档说明 device data 包含 customer assignment 和 status
-- Atera 支持文档说明 large exports 需要使用 pagination
+- Atera API 文档页面默认加载 Swagger JSON：`https://app.atera.com/swagger/docs/v3`
+- 2026-06-17 已读取官方 Swagger JSON。Swagger 版本为 `2.0`，`host` 为 `app.atera.com`，`schemes` 为 `https`
+- 官方 Swagger `securityDefinitions` 定义 API key authentication：header name 为 `X-API-KEY`
+- 官方 Swagger 定义 `GET /api/v3/agents`，operationId 为 `Agent_Get`，summary 为 `Find agents`
+- `GET /api/v3/agents` query parameters:
+  - `page`: integer, optional, page index, default is `1`
+  - `itemsInPage`: integer, optional, number of items per page, default is `20`, max is `500`
+- `GET /api/v3/agents` success response schema 为 `APIResultWrapper[AgentQueryDTO]`
+- `APIResultWrapper[AgentQueryDTO]` properties:
+  - `items`: array of `AgentQueryDTO`
+  - `totalItemCount`: integer
+  - `page`: integer
+  - `itemsInPage`: integer
+  - `totalPages`: integer
+  - `prevLink`: string
+  - `nextLink`: string
+- `AgentQueryDTO` 已确认包含以下与本模块相关的 properties:
+  - identity/name: `AgentID`, `MachineID`, `DeviceGuid`, `AgentName`, `SystemName`, `MachineName`
+  - customer ownership: `CustomerID`, `CustomerName`
+  - hardware identity: `VendorSerialNumber`, `Vendor`, `VendorBrandModel`, `ProductName`
+  - status/diagnostics available for later extension: `Online`, `LastSeen`, `ReportedFromIP`, `MacAddresses`, `IpAddresses`
+- sibling 项目 `BD_Atera_AutoCompare` 曾使用同一 endpoint/auth/pagination shape 实际导出过 Atera agents，可作为历史交叉验证来源；后续不得新增 Python 探针
 
-当前尚未从官方 API 文档页面可靠确认的实现细节：
+当前仍未从官方 Swagger 明确确认、不得写死为业务语义的细节：
 
-- `GET /api/v3/agents` 与 `GET /api/v3/devices` 哪一个应作为第一版唯一 endpoint
-- authentication header name and format
-- query parameter names for paging
-- default/max page size
-- response envelope shape
-- item collection JSON property name
-- total count / total pages / next page indicator
-- official status code and error payload semantics
-- exact JSON property names for agent id, device name, serial number, manufacturer, model, customer id, customer name, and status
+- authentication failure 的具体 status/body shape
+- rate limit response body shape
+- retryable status semantics beyond documented `500`; implementation may classify standard transient HTTP statuses (`429`, `500`, `502`, `503`, `504`) as retryable and must keep this behavior covered by mocked tests
+- whether `VendorBrandModel` or `ProductName` is the better long-term Snipe-IT model source; first implementation maps `VendorBrandModel` first and falls back to `ProductName`
 
-这些细节是 production implementation 的阻塞项。后续生成代码前，必须打开官方 Atera API docs 并把上述细节补入本技术规格或实现记录。若官方文档仍不可用或含义不明确，不允许猜测 wire shape。
+已确认的 endpoint、auth、pagination envelope 和 core JSON property names 不再阻塞 first production implementation。未确认的错误 body 和 richer field semantics 必须在后续需要使用时再次查阅官方文档，或通过 owner/operator 手动真实 API 验证记录脱敏结论。
 
-项目当前没有独立的 Atera 测试环境。任何真实 Atera API call 都可能作用于真实租户数据，因此不得把真实 API 当作普通自动化测试目标。若官方文档无法确认某个 API 用法，后续 agent 必须停止并向项目 owner 列出不确定点；只有 owner 明确同意后，才可以在测试区使用最小范围 Python 探针脚本验证行为。
+项目当前没有独立的 Atera 测试环境。任何真实 Atera API call 都可能作用于真实租户数据，因此不得把真实 API 当作普通自动化测试目标。
 
-Python 探针脚本规则：
+真实 API 验证规则：
 
-- 只允许执行只读 GET 请求
-- 只请求确认 API 行为所需的最小数据量
+- 自动化测试必须使用 mocked `HttpMessageHandler`、fake client、本地 fixture 或脱敏样例 payload
+- 不允许添加 Python 探针脚本
+- 不允许在 CI、普通 `dotnet test`、build 或默认开发命令中调用真实 Atera API
+- 使用真实 API key 的验证必须由 owner/operator 手动运行
+- 手动验证说明必须附 exact command/UI steps、所需 local-only config/env vars、预期脱敏输出和 cleanup steps
+- 手动验证只允许执行只读 GET 请求
+- 手动验证只请求确认 API 行为所需的最小数据量
 - 不执行 create/update/delete
 - 不在代码库中提交真实 API key
 - 不打印 API key
@@ -57,24 +76,27 @@ Python 探针脚本规则：
 
 Production code 位于 `src/AteraSnipeSync.Core/Atera/`。
 
+Interface files must live under module-local `Interfaces/` folders while keeping the module namespace unchanged.
+
 需要创建或修改：
 
-- `IAteraClient.cs`
+- `Interfaces/IAteraClient.cs`
 - `AteraClient.cs`
 - `AteraPullRequest.cs`
 - `AteraPullResult.cs`
-- `AteraAgentDto.cs`
+- `AgentInfo.cs`
 - `PullSummary.cs`
 - `AteraPullOptions.cs`
 - `AteraPullException.cs`
 - `AteraPullFailureKind.cs`
 - `AteraWarningFactory.cs`
-- `IAteraClock.cs`
+- `Interfaces/IAteraClock.cs`
 - `SystemAteraClock.cs`
 
 需要删除或停止使用：
 
 - `AteraCustomerDto.cs`
+- `AteraAgentDto.cs`
 - `AteraPullResult.Customers`
 - `PullSummary.CustomerCount`
 
@@ -127,7 +149,7 @@ namespace AteraSnipeSync.Core.Atera;
 
 public sealed class AteraPullResult
 {
-    public required IReadOnlyList<AteraAgentDto> Agents { get; init; }
+    public required IReadOnlyList<AgentInfo> Agents { get; init; }
     public required PullSummary Summary { get; init; }
     public required IReadOnlyList<ModuleWarning> Warnings { get; init; }
 }
@@ -139,29 +161,49 @@ Rules:
 - 不允许包含 `Customers`
 - pull 失败时不返回 `AteraPullResult`
 
-### 4.4 AteraAgentDto
+### 4.4 AgentInfo
 
 ```csharp
 namespace AteraSnipeSync.Core.Atera;
 
-public sealed class AteraAgentDto
+public sealed class AgentInfo
 {
     public required string AgentId { get; init; }
     public required string Name { get; init; }
-    public string? SerialNumber { get; init; }
+    public required string RawJson { get; init; }
+    public string? MachineId { get; init; }
+    public string? DeviceGuid { get; init; }
     public string? CustomerId { get; init; }
     public string? CustomerName { get; init; }
-    public string? Manufacturer { get; init; }
-    public string? Model { get; init; }
+    public string? AgentName { get; init; }
+    public string? SystemName { get; init; }
+    public string? MachineName { get; init; }
+    public string? Vendor { get; init; }
+    public string? VendorSerialNumber { get; init; }
+    public string? VendorBrandModel { get; init; }
+    public string? ProductName { get; init; }
+    public IReadOnlyList<string> MacAddresses { get; init; }
+    public IReadOnlyList<string> IpAddresses { get; init; }
+    public string? HardwareDisksJson { get; init; }
+    public string? BatteryInfoJson { get; init; }
+    // plus every currently documented AgentQueryDTO field needed to preserve Atera inventory shape.
+
+    public string? SerialNumber { get; }
+    public string? Manufacturer { get; }
+    public string? Model { get; }
 }
 ```
 
 Rules:
 
 - `AgentId` 和 `Name` 是内部 required identity fields
+- `RawJson` 必须保留该 agent record 的脱敏前原始 JSON 文本，但不得包含 API key
+- `AgentInfo` 必须尽可能覆盖官方 Swagger `AgentQueryDTO` 当前公开字段；字段暂时不用也要保留，后续模块再决定消费哪些字段
+- 对复杂或不稳定的 nested object，例如 `HardwareDisks` 和 `BatteryInfo`，第一版用 raw JSON string 保留，避免提前发明内部结构
+- `SerialNumber`、`Manufacturer`、`Model` 是给 Reconstruction/Mapping 使用的便利属性，分别来自 `VendorSerialNumber`、`Vendor`、`VendorBrandModel ?? ProductName`
 - `CustomerId` / `CustomerName` 只来自 agent/device response 中可获得的归属属性
 - 不通过独立 customer endpoint 补齐 customer fields
-- JSON wire property names 必须在实现前由官方 Atera docs 验证
+- JSON wire property names 以 2026-06-17 官方 Swagger `AgentQueryDTO` 为准
 
 ### 4.5 PullSummary
 
@@ -283,7 +325,7 @@ Constructor validation:
 `PullInventoryAsync` must:
 
 1. Validate `request.ApiKey`
-2. Initialize empty `List<AteraAgentDto>` and `List<ModuleWarning>`
+2. Initialize empty `List<AgentInfo>` and `List<ModuleWarning>`
 3. Build the first agents/devices request URI using official docs
 4. Loop through the Atera paged collection
 5. For each page:
@@ -291,7 +333,7 @@ Constructor validation:
    - retry retryable failures up to `MaxRetryAttempts`
    - stop immediately on authentication failure
    - parse the response envelope
-   - convert valid records to `AteraAgentDto`
+   - convert valid records to `AgentInfo`
    - convert non-fatal malformed records to warnings
    - determine next page from official pagination fields
 6. If any page ultimately fails, throw `AteraPullException`
@@ -320,38 +362,30 @@ This rule applies to:
 
 ### 7.1 Endpoint
 
-Target endpoint must be selected from official Atera API docs before implementation.
+Use official Swagger endpoint `GET /api/v3/agents`.
 
-Allowed candidates based on official support docs:
-
-- `GET /api/v3/agents`
-- `GET /api/v3/devices`
-
-First implementation should prefer the endpoint that official docs identify as the canonical full device/agent list. If both are valid, choose `GET /api/v3/agents` because project contracts are named `AteraAgentDto` and master plan refers to agents.
+The first implementation must not call `GET /api/v3/devices` or any customer endpoint. If later modules need non-agent device types, update the module plan and this technical spec before expanding the endpoint set.
 
 ### 7.2 Authentication
 
-Authentication must use the official Atera API key mechanism.
+Authentication uses the official Swagger API key mechanism:
 
-Do not implement header name, scheme, or query auth until verified in `https://app.atera.com/apidocs`.
+- header name: `X-API-KEY`
+- header value: raw Atera API key from `AteraPullRequest.ApiKey`
+- no bearer prefix
+- never put the API key in query string, logs, warnings, exceptions, or fixtures
 
 ### 7.3 Pagination
 
-Pagination must follow official docs.
+Pagination follows official Swagger:
 
-The implementation must not assume:
-
-- parameter names such as `page`, `itemsInPage`, `limit`, or `offset`
-- response fields such as `totalPages`, `nextPage`, or `items`
-- whether page numbers are zero-based or one-based
-- maximum page size
-
-Once verified, update this section with:
-
-- request query parameters
-- page size rule
-- response item collection field
-- response next-page/end condition
+- request query parameter `page` is one-based and defaults to `1`
+- request query parameter `itemsInPage` defaults to `20` and maxes at `500`
+- first implementation should request `itemsInPage=500`
+- response item collection field is `items`
+- response metadata fields are `totalItemCount`, `page`, `itemsInPage`, `totalPages`, `prevLink`, `nextLink`
+- first implementation should use `totalPages` to stop; if `totalPages` is missing but `totalItemCount/itemsInPage` can compute the same value, that fallback is allowed
+- if pagination state cannot be determined, throw `AteraPullException(PaginationStateUnknown)`
 
 ### 7.4 Retryable Failures
 
@@ -360,14 +394,20 @@ Retryable conditions must include .NET transient request failures:
 - `HttpRequestException`
 - request timeout if represented by .NET as a timeout exception
 
-HTTP status retryability must be confirmed against official docs before implementation.
-
 Expected default retry behavior:
 
 - attempt original request once
 - retry up to `AteraPullOptions.MaxRetryAttempts`
 - wait `AteraPullOptions.RetryDelay` between attempts
 - observe cancellation token during retry delay
+
+Retryable HTTP statuses:
+
+- `429`
+- `500`
+- `502`
+- `503`
+- `504`
 
 Authentication failures must not be retried.
 
@@ -386,14 +426,18 @@ Logs must not include API key.
 
 ## 8. Wire Parsing
 
-Wire parsing must be implemented only after official docs confirm response shape.
+Wire parsing is based on the 2026-06-17 official Swagger response shape.
 
-Recommended implementation shape after verification:
+Implementation shape:
 
-- internal sealed wire DTOs in `AteraClient.cs` or `AteraWireModels.cs`
+- internal sealed response envelope in `AteraClient.cs`
+- `items` records parsed as `JsonElement` so a single malformed record can be skipped without failing the entire page
 - `[JsonPropertyName]` attributes matching official JSON properties
 - `System.Text.Json`
 - case-sensitive mapping unless official docs show otherwise
+- `AgentInfo.RawJson` preserves the full agent item JSON
+- `AgentInfo` maps all currently documented `AgentQueryDTO` simple fields where possible
+- `HardwareDisks` and `BatteryInfo` are preserved as raw JSON strings because the current module does not need to model nested structure yet
 
 Malformed record handling:
 
@@ -478,12 +522,12 @@ Create tests in `tests/AteraSnipeSync.Tests/Atera/AteraClientTests.cs`.
 
 Use mocked `HttpMessageHandler`; do not call real Atera API.
 
-Unit tests must never call the real Atera API. Tests that need HTTP behavior must use mocked handlers, local fixtures, or sanitized JSON captured from owner-approved probes.
+Unit tests must never call the real Atera API. Tests that need HTTP behavior must use mocked handlers, fake clients, local fixtures, or sanitized hand-written/sample JSON.
 
 Required tests:
 
 1. `PullInventoryAsync_ThrowsArgumentException_WhenApiKeyMissing`
-2. `PullInventoryAsync_ReturnsAllAgents_WhenSinglePageSucceeds`
+2. `PullInventoryAsync_ReturnsAllAgentInfo_WhenSinglePageSucceeds`
 3. `PullInventoryAsync_ReturnsAllAgents_WhenMultiplePagesSucceed`
 4. `PullInventoryAsync_DoesNotCallCustomerEndpoint`
 5. `PullInventoryAsync_ThrowsAuthenticationFailed_WhenAteraReturnsAuthFailure`
@@ -496,7 +540,7 @@ Required tests:
 12. `PullInventoryAsync_UsesClockForPulledAt`
 13. `PullInventoryAsync_DoesNotLogApiKey_WhenFailureOccurs`
 
-Because official wire shape is not yet verified, tests that assert JSON property names, pagination field names, status codes, or auth headers must be written only after official docs are recorded in this spec.
+Tests that assert JSON property names, pagination field names, status codes, or auth headers must use mocked HTTP only and must be based on the official Swagger findings recorded in this spec.
 
 ## 13. Contract Tests
 
@@ -530,8 +574,10 @@ Implementation is complete when:
 
 - `AteraClient` implements `IAteraClient`
 - `PullInventoryAsync` returns complete agent/device collection on success
+- returned agents are `AgentInfo` records that preserve broad Atera `AgentQueryDTO` fields and `RawJson`
 - no customer endpoint is called
 - no `AteraCustomerDto` is required by public contracts
+- no `AteraAgentDto` is required by public contracts
 - retryable page failure either recovers or throws clear `AteraPullException`
 - retry exhaustion never returns partial agents
 - authentication failure is not retried
@@ -550,24 +596,27 @@ Do not implement in this module:
 - customer enrichment via separate customer endpoint
 - exploratory real Atera API calls without owner approval
 - automated tests against the real Atera tenant
+- Python probes
+- manual real-key validation without documented run instructions
 - scheduler loop pause/resume mechanics
 - TrayApp button
 - status file persistence
 - notification publishing
 
-## 16. Implementation Blocker Before Code Generation
+## 16. Verification Checklist Before Future Wire Changes
 
-Before writing production code or tests that assert Atera wire behavior, complete this checklist:
+Current implementation is allowed because the following items were verified from official Swagger on 2026-06-17:
 
-- [ ] Confirm official canonical endpoint: `/api/v3/agents` or `/api/v3/devices`
-- [ ] Confirm authentication header/scheme
-- [ ] Confirm paging request parameters
-- [ ] Confirm paging response envelope
-- [ ] Confirm JSON property names for required and optional agent fields
+- [x] Confirm official canonical endpoint: `GET /api/v3/agents`
+- [x] Confirm authentication header/scheme: `X-API-KEY` header with raw API key
+- [x] Confirm paging request parameters: `page`, `itemsInPage`
+- [x] Confirm paging response envelope: `items`, `totalItemCount`, `page`, `itemsInPage`, `totalPages`, `prevLink`, `nextLink`
+- [x] Confirm JSON property names for required and optional agent fields currently mapped into `AgentInfo`
+
+Still uncertain and must be rechecked before depending on exact behavior:
+
 - [ ] Confirm auth failure status/error body
-- [ ] Confirm rate limit / retryable status semantics
-- [ ] If official docs are unclear, ask owner before running any real API probe
-- [ ] If owner approves probing, run only a minimal read-only Python probe in the agreed test area
-- [ ] Record probe findings without committing secrets or full real tenant payloads
+- [ ] Confirm rate limit response body shape
+- [ ] Confirm whether `VendorBrandModel` or `ProductName` should be the long-term Snipe-IT model source
 
-If any item cannot be verified, stop and record the uncertainty instead of guessing.
+If future changes need behavior not covered above, stop and record the uncertainty instead of guessing. Real Atera API validation must be manual-only, owner/operator-run, read-only, minimal, sanitized, and documented with run instructions.

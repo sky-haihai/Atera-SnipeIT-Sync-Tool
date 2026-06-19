@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Manual Sync Preflight 与 Scheduler Sync 流程确认</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5d6875;
+      --paper: #f7f9fc;
+      --panel: #ffffff;
+      --line: #d8e0ea;
+      --blue: #215b94;
+      --blue-soft: #e8f2ff;
+      --teal: #0f6f68;
+      --teal-soft: #e7f6f3;
+      --amber: #8a6100;
+      --amber-soft: #fff5d8;
+      --green: #1f6b3b;
+      --green-soft: #e8f6ed;
+      --red: #a13a2a;
+      --red-soft: #fff0ed;
+      --shadow: 0 14px 30px rgba(25, 39, 52, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.55;
+    }
+
+    header {
+      background: #eef3f8;
+      border-bottom: 1px solid var(--line);
+      padding: 30px 24px 24px;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 32px;
+    }
+
+    h2 {
+      font-size: 22px;
+      margin-bottom: 16px;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .subtitle {
+      max-width: 920px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    main {
+      padding: 28px 24px 52px;
+    }
+
+    section {
+      margin-top: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      background: #edf2f7;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 0.92em;
+    }
+
+    .answer-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .answer {
+      min-height: 132px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .answer p,
+    .node p,
+    .note p,
+    td {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .badge.blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .badge.teal {
+      color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .badge.amber {
+      color: var(--amber);
+      background: var(--amber-soft);
+    }
+
+    .badge.green {
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .badge.red {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr 1.4fr 1.4fr;
+      gap: 16px;
+      align-items: stretch;
+    }
+
+    .lane {
+      display: grid;
+      gap: 12px;
+    }
+
+    .node {
+      position: relative;
+      min-height: 116px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 14px;
+    }
+
+    .node h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .node .num {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .node.manual {
+      border-color: #b7d3ef;
+      background: #fbfdff;
+    }
+
+    .node.scheduled {
+      border-color: #b7ddd8;
+      background: #fbfffe;
+    }
+
+    .node.shared {
+      border-color: #a9d6ba;
+      background: #fbfffc;
+    }
+
+    .node.stop {
+      border-color: #e8b8ae;
+      background: #fffafa;
+    }
+
+    .connector {
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 28px;
+    }
+
+    .stack-title {
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      color: #314152;
+      font-weight: 800;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+
+    .note {
+      border-left: 5px solid var(--amber);
+      background: var(--amber-soft);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-top: 16px;
+    }
+
+    .note strong {
+      color: #4c3500;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f0f5f9;
+      color: #263544;
+      font-size: 14px;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .check {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 14px;
+      min-height: 96px;
+    }
+
+    .check strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .check p {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 980px) {
+      .answer-grid,
+      .checklist {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .connector {
+        transform: rotate(90deg);
+        min-height: 24px;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Manual Sync Preflight CSV 与 Scheduler Sync 流程确认</h1>
+      <p class="subtitle">
+        这张流程图用于确认产品语义：CSV 预览不是 debug mode，不是“按快照执行”的导入文件。
+        手动流程有两个按钮：<strong>Sync Now</strong> 直接同步，<strong>Preview Changes</strong> 才生成 CSV。
+        真正写入 Snipe-IT 时，手动直接同步、手动预览确认和定时任务都进入同一套实际 sync 入口。
+      </p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>结论先看</h2>
+      <div class="answer-grid">
+        <article class="answer">
+          <span class="badge blue">不是 Debug</span>
+          <h3>CSV 预览不是一个 debug 按钮</h3>
+          <p>
+            UI 上应该是一个单独的 <strong>Preview Changes</strong> 按钮。
+            只有点它才生成 CSV；普通 <strong>Sync Now</strong> 不生成 CSV。
+          </p>
+        </article>
+        <article class="answer">
+          <span class="badge amber">不按快照</span>
+          <h3>确认后不按第一次 CSV 快照执行</h3>
+          <p>
+            用户确认后，系统重新跑一次 lookup / mapping / planning / import。
+            如果第二次真实结果和 CSV 有差异，以最终报告为准。
+          </p>
+        </article>
+        <article class="answer">
+          <span class="badge green">共享入口</span>
+          <h3>真实 sync 只有一套入口</h3>
+          <p>
+            <strong>Sync Now</strong>、预览确认后的真实执行、scheduler 自动执行都进入同一个实际 sync pipeline。
+            区别只是触发来源和是否先走 CSV 预览。
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>整体流程图</h2>
+      <div class="flow" aria-label="manual and scheduled sync flow">
+        <div class="lane">
+          <div class="stack-title">Trigger</div>
+          <article class="node manual">
+            <h3><span class="num">1</span>Sync Now</h3>
+            <p>用户想立刻执行真实同步。此按钮不生成 CSV，直接进入共享真实 sync pipeline。</p>
+          </article>
+          <article class="node manual">
+            <h3><span class="num">1</span>Preview Changes</h3>
+            <p>用户想先看本次可能新增/修改的对象。此按钮只生成临时 CSV 预览。</p>
+          </article>
+          <article class="node scheduled">
+            <h3><span class="num">1</span>Scheduler 到点</h3>
+            <p>后台按 daily / weekly / monthly 计划触发。无人值守，不弹 UI，不生成临时 CSV。</p>
+          </article>
+        </div>
+
+        <div class="lane">
+          <div class="stack-title">Preflight Gate</div>
+          <article class="node manual">
+            <h3><span class="num">2</span>跳过 CSV 预览</h3>
+            <p>
+              <code>Sync Now</code> 是直接执行入口，request 中
+              <code>ManualPreflightCsvEnabled = false</code>。
+            </p>
+          </article>
+          <article class="node manual">
+            <h3><span class="num">2</span>生成临时 CSV 预览</h3>
+            <p>
+              只对 <code>Preview Changes</code> 生效。输出到
+              <code>C:\ProgramData\AteraSnipeSync\Preflight\{runId}\</code>。
+            </p>
+          </article>
+          <article class="node scheduled">
+            <h3><span class="num">2</span>跳过 CSV 预览</h3>
+            <p>
+              scheduled request 强制设置
+              <code>ManualPreflightCsvEnabled = false</code>。
+            </p>
+          </article>
+        </div>
+
+        <div class="lane">
+          <div class="stack-title">Decision</div>
+          <article class="node manual">
+            <h3><span class="num">3</span>直接执行</h3>
+            <p>
+              <code>Sync Now</code> 不等待人工审核，不读取 CSV，直接调用真实 sync。
+            </p>
+          </article>
+          <article class="node manual">
+            <h3><span class="num">3</span>用户确认或取消</h3>
+            <p>
+              <code>Preview Changes</code> 后，确认才执行真实 sync；取消则停止。确认后不使用 CSV 快照作为执行输入。
+            </p>
+          </article>
+          <article class="node scheduled">
+            <h3><span class="num">3</span>自动继续</h3>
+            <p>
+              scheduler 设置 <code>TriggeredBy = "scheduled"</code>，
+              然后直接进入真实 sync。
+            </p>
+          </article>
+        </div>
+
+        <div class="lane">
+          <div class="stack-title">Shared Real Sync</div>
+          <article class="node shared">
+            <h3><span class="num">4</span>同一套真实 sync 入口</h3>
+            <p>
+              重新执行 Atera Pull、Reconstruction、Snipe Import planning 和真实写入。
+              Snipe Import 按 MAC、serial、name similarity 匹配。
+            </p>
+          </article>
+          <article class="node shared">
+            <h3><span class="num">5</span>最终报告和状态</h3>
+            <p>
+              真实执行结果单独保存为 final report / status。
+              它和手动 preflight CSV 文件分开保存。
+            </p>
+          </article>
+        </div>
+      </div>
+
+      <div class="note">
+        <p>
+          <strong>关键点：</strong>
+          <code>Sync Now</code> 直接真实同步；<code>Preview Changes</code> 只生成审核 CSV。
+          预览确认后会重新计算当前状态并走共享真实 sync pipeline，不按第一次 CSV 快照执行。
+        </p>
+      </div>
+    </section>
+
+    <section>
+      <h2>手动 Sync 的推荐 UI 语义</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>UI 元素</th>
+            <th>推荐命名</th>
+            <th>行为</th>
+            <th>不要这样设计</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>直接同步按钮</td>
+            <td><code>Sync Now</code></td>
+            <td>直接调用真实 sync pipeline，不生成 preflight CSV，不等待人工确认。</td>
+            <td>不要把 <code>Sync Now</code> 做成必须先预览的按钮。</td>
+          </tr>
+          <tr>
+            <td>预览按钮</td>
+            <td><code>Preview Changes</code></td>
+            <td>生成三张 CSV，显示 folder path，等待用户确认或取消。</td>
+            <td>不要叫 <code>Debug Mode</code>，避免误解成全局调试开关。</td>
+          </tr>
+          <tr>
+            <td>确认按钮</td>
+            <td><code>Confirm and Sync</code></td>
+            <td>重新跑一次真实 sync，不读取第一次 CSV 作为执行输入。</td>
+            <td>不要叫 <code>Import This CSV</code>，因为并不是按 CSV 快照导入。</td>
+          </tr>
+          <tr>
+            <td>取消按钮</td>
+            <td><code>Cancel</code></td>
+            <td>停止流程，不执行任何真实 Snipe-IT POST/PATCH。</td>
+            <td>不要保存成 pending job，第一版没有快照强一致。</td>
+          </tr>
+          <tr>
+            <td>CSV 文件夹</td>
+            <td><code>Preflight Folder</code></td>
+            <td>显示 <code>C:\ProgramData\AteraSnipeSync\Preflight\{runId}\</code> 并提供打开入口。</td>
+            <td>不要和最终报告放在同一个位置或同一种 report 概念里。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>真实 Sync Pipeline</h2>
+      <div class="checklist">
+        <article class="check">
+          <strong>1. Atera Pull</strong>
+          <p>从 Atera 拉 agent/device inventory。自动测试只用 mock，不调用真实 API。</p>
+        </article>
+        <article class="check">
+          <strong>2. Reconstruction</strong>
+          <p>把 Atera device 转成 <code>SnipeImportBatch</code>，包含 serial、MAC、company、model、notes。</p>
+        </article>
+        <article class="check">
+          <strong>3. Snipe Import Planning</strong>
+          <p>查 company、category、manufacturer、model、hardware，并按 MAC、serial、name similarity 决定 add/modify。</p>
+        </article>
+        <article class="check">
+          <strong>4. Snipe-IT Writes</strong>
+          <p>真实执行时发送 company/model/hardware 的 <code>POST</code> 或 <code>PATCH</code>。scheduled sync 不生成 preflight CSV。</p>
+        </article>
+        <article class="check">
+          <strong>5. Final Report</strong>
+          <p>保存真实 created/updated/failed/warnings/actions。手动 preflight CSV 不等于最终报告。</p>
+        </article>
+        <article class="check">
+          <strong>6. Status / Notification</strong>
+          <p>WorkerService 后续会保存最新状态并发通知。scheduler 不等待人工确认。</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>实现约束对应关系</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>需求</th>
+            <th>当前实现点</th>
+            <th>含义</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Preview Changes</code> 先写 CSV</td>
+            <td><code>SnipeImportOptions.ManualPreflightCsvEnabled</code> + <code>SnipeImportPreflightCsvWriter</code></td>
+            <td>只有预览流程打开该选项。Importer 能在真实写入前输出三张计划表；CSV 写失败会阻止 POST/PATCH。</td>
+          </tr>
+          <tr>
+            <td><code>Sync Now</code> 直接执行</td>
+            <td>手动真实 sync request</td>
+            <td><code>Sync Now</code> 应设置 <code>ManualPreflightCsvEnabled = false</code>，直接进入共享真实 sync pipeline。</td>
+          </tr>
+          <tr>
+            <td>scheduler 不生成 CSV</td>
+            <td><code>ScheduledSyncRequestFactory.CreateScheduledRequest</code></td>
+            <td>scheduled request 会强制关闭 <code>ManualPreflightCsvEnabled</code>。</td>
+          </tr>
+          <tr>
+            <td>真实 sync 共享入口</td>
+            <td>后续 <code>SyncOrchestrator</code> / WorkerService wiring</td>
+            <td>手动确认后和定时任务都应调用同一个 orchestration pipeline，只是 request metadata 不同。</td>
+          </tr>
+          <tr>
+            <td>不按快照执行</td>
+            <td>产品流程约束</td>
+            <td>确认后重新计算。CSV 仅供审核，不作为第二次执行的输入文件。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

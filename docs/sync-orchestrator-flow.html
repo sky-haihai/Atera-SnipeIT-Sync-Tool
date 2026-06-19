@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Module 4 Sync Orchestrator 流程复习</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5d6875;
+      --paper: #f7f9fc;
+      --panel: #ffffff;
+      --line: #d8e0ea;
+      --blue: #215b94;
+      --blue-soft: #e8f2ff;
+      --teal: #0f6f68;
+      --teal-soft: #e7f6f3;
+      --amber: #8a6100;
+      --amber-soft: #fff5d8;
+      --green: #1f6b3b;
+      --green-soft: #e8f6ed;
+      --red: #a13a2a;
+      --red-soft: #fff0ed;
+      --shadow: 0 14px 30px rgba(25, 39, 52, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.55;
+    }
+
+    header {
+      background: #eef3f8;
+      border-bottom: 1px solid var(--line);
+      padding: 30px 24px 24px;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 32px;
+    }
+
+    h2 {
+      margin-bottom: 16px;
+      font-size: 22px;
+    }
+
+    h3 {
+      margin-bottom: 8px;
+      font-size: 16px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      background: #edf2f7;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 0.92em;
+    }
+
+    main {
+      padding: 28px 24px 52px;
+    }
+
+    section {
+      margin-top: 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    .subtitle {
+      max-width: 940px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary,
+    .node,
+    .decision,
+    .task,
+    .boundary,
+    .source {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    .summary p,
+    .node p,
+    .decision p,
+    .task p,
+    .boundary p,
+    .source p,
+    li,
+    td {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      margin-bottom: 10px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .blue {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .teal {
+      color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .amber {
+      color: var(--amber);
+      background: var(--amber-soft);
+    }
+
+    .green {
+      color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .red {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
+      gap: 14px;
+      align-items: stretch;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .node {
+      position: relative;
+      min-height: 178px;
+      min-width: 150px;
+    }
+
+    .node::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -14px;
+      width: 14px;
+      height: 2px;
+      background: var(--line);
+    }
+
+    .node:last-child::after {
+      content: none;
+    }
+
+    .node h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .num {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: #ffffff;
+      font-size: 13px;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .node.pull {
+      border-color: #b7d3ef;
+      background: #fbfdff;
+    }
+
+    .node.map {
+      border-color: #b7ddd8;
+      background: #fbfffe;
+    }
+
+    .node.import {
+      border-color: #d9c48b;
+      background: #fffdf6;
+    }
+
+    .node.result {
+      border-color: #a9d6ba;
+      background: #fbfffc;
+    }
+
+    .node.fail {
+      border-color: #e8b8ae;
+      background: #fffafa;
+    }
+
+    .decision-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .decision {
+      min-height: 180px;
+    }
+
+    .decision h3 {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .decision .marker {
+      display: inline-grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border-radius: 4px;
+      color: #ffffff;
+      font-weight: 800;
+      background: var(--red);
+      transform: rotate(45deg);
+      flex: 0 0 auto;
+    }
+
+    .decision .marker span {
+      transform: rotate(-45deg);
+    }
+
+    .task-grid,
+    .boundary-grid,
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    ul {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: #243447;
+      background: #f3f7fb;
+      font-size: 14px;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .note {
+      margin-top: 14px;
+      border-left: 4px solid var(--amber);
+      border-radius: 4px;
+      background: var(--amber-soft);
+      padding: 14px 16px;
+      color: #4c3500;
+      font-size: 14px;
+    }
+
+    .compact {
+      margin-top: 10px;
+    }
+
+    @media (max-width: 920px) {
+      .summary-grid,
+      .decision-grid,
+      .task-grid,
+      .boundary-grid,
+      .source-grid {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Module 4: Sync Orchestrator 流程复习</h1>
+      <p class="subtitle">
+        本页把模块 4 需要完成的事情画成流程图：它不直接访问 Atera 或 Snipe-IT API，而是把 Atera Pull、Reconstruction、Snipe Import 三个核心模块串成一次完整 sync run，并输出结构化结果。
+      </p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section>
+      <h2>1. 一句话定位</h2>
+      <div class="summary-grid">
+        <article class="summary">
+          <span class="badge blue">模块边界</span>
+          <h3>只负责编排</h3>
+          <p>接收 <code>SyncRunRequest</code>，按固定顺序调用三个核心模块，不理解 API 细节、不做字段 mapping、不做 UI。</p>
+        </article>
+        <article class="summary">
+          <span class="badge teal">核心产物</span>
+          <h3>生成 SyncRunResult</h3>
+          <p>记录 started/finished 时间，保存 pull、batch、import result，并聚合 warnings 和 failures。</p>
+        </article>
+        <article class="summary">
+          <span class="badge amber">安全开关</span>
+          <h3>传递 Dry Run</h3>
+          <p><code>SyncRunOptions.DryRun</code> 要影响 import 行为，manual preview、scheduled sync、test run 都走同一个入口。</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 主流程图</h2>
+      <div class="flow" aria-label="Sync Orchestrator main flow">
+        <article class="node pull">
+          <h3><span class="num">1</span>收到请求</h3>
+          <p>入口是 <code>ISyncOrchestrator.RunOnceAsync(request, ct)</code>。</p>
+          <ul>
+            <li>确认 request 不为空</li>
+            <li>读取 <code>TriggeredBy</code></li>
+            <li>记录 <code>StartedAt</code></li>
+          </ul>
+        </article>
+        <article class="node pull">
+          <h3><span class="num">2</span>Atera Pull</h3>
+          <p>调用 <code>IAteraClient.PullInventoryAsync</code> 拉取完整 Atera inventory。</p>
+          <ul>
+            <li>成功时拿到 <code>AteraPullResult</code></li>
+            <li>收集 pull warnings</li>
+            <li>失败时立刻停止后续步骤</li>
+          </ul>
+        </article>
+        <article class="node map">
+          <h3><span class="num">3</span>Reconstruction</h3>
+          <p>调用 <code>IInventoryMapper.Map</code> 把 pull result 转成 <code>SnipeImportBatch</code>。</p>
+          <ul>
+            <li>不调用外部系统</li>
+            <li>收集 mapping warnings</li>
+            <li>map 失败时不进入 import</li>
+          </ul>
+        </article>
+        <article class="node import">
+          <h3><span class="num">4</span>Snipe Import</h3>
+          <p>调用 <code>ISnipeImporter.ImportAsync</code>，把 batch 交给 Snipe Import 模块处理。</p>
+          <ul>
+            <li>确保 dry-run 意图传入 options</li>
+            <li>收集 import warnings</li>
+            <li>把 import failures 转成 run failures</li>
+          </ul>
+        </article>
+        <article class="node result">
+          <h3><span class="num">5</span>汇总结果</h3>
+          <p>组合三个阶段的输出，生成完整 <code>SyncRunResult</code>。</p>
+          <ul>
+            <li><code>Success</code> 由 failures 决定</li>
+            <li>保留可用的中间结果</li>
+            <li>记录 <code>FinishedAt</code></li>
+          </ul>
+        </article>
+        <article class="node result">
+          <h3><span class="num">6</span>交给调用方</h3>
+          <p>返回结果给 Worker、TrayApp、测试入口或未来 Status Store。</p>
+          <ul>
+            <li>Orchestrator 不保存文件</li>
+            <li>不发 email</li>
+            <li>不直接更新 UI</li>
+          </ul>
+        </article>
+      </div>
+      <p class="note">重点记忆：模块 4 是 pipeline 控制器。它决定“下一步能不能继续”，但不决定 Atera API 字段、Snipe-IT payload 或 UI 展示。</p>
+    </section>
+
+    <section>
+      <h2>3. 失败分支</h2>
+      <div class="decision-grid">
+        <article class="decision">
+          <h3><span class="marker"><span>1</span></span>Pull 失败</h3>
+          <p>例如认证失败、网络失败、分页无法确认或 response 无法解析。</p>
+          <ul>
+            <li>不调用 mapper</li>
+            <li>不调用 importer</li>
+            <li><code>PullResult</code> 通常为空</li>
+            <li>新增 <code>SyncFailure.Stage = "AteraPull"</code></li>
+          </ul>
+        </article>
+        <article class="decision">
+          <h3><span class="marker"><span>2</span></span>Map 失败</h3>
+          <p>例如 mapper 抛出不可恢复异常，或未来技术规格定义 batch 无效。</p>
+          <ul>
+            <li>保留已成功的 <code>PullResult</code></li>
+            <li>不调用 importer</li>
+            <li><code>ImportBatch</code> 为空或不可用</li>
+            <li>新增 <code>SyncFailure.Stage = "Reconstruction"</code></li>
+          </ul>
+        </article>
+        <article class="decision">
+          <h3><span class="marker"><span>3</span></span>Import 失败</h3>
+          <p>包括 importer 抛异常，或返回的 <code>SnipeImportResult.Failures</code> 有失败资产。</p>
+          <ul>
+            <li>保留 pull result 和 import batch</li>
+            <li>返回 import result 中的 action/failure 信息</li>
+            <li><code>Success = false</code></li>
+            <li>新增 <code>SyncFailure.Stage = "SnipeImport"</code></li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. 具体要补什么</h2>
+      <div class="task-grid">
+        <article class="task">
+          <span class="badge blue">文档阶段</span>
+          <h3>先补模块 4 文档</h3>
+          <ul>
+            <li><code>docs/module-plans/04-SyncOrchestrator-功能职责.md</code>：写清目标、输入、输出、失败条件、不负责事项、扩展点。</li>
+            <li><code>docs/technical-specs/04-SyncOrchestrator-技术规格.md</code>：定义类、构造函数依赖、方法签名、错误转换、warning 聚合、测试用例。</li>
+            <li>现在这两个文件只有标题，按项目规则，正式写生产代码前必须先补齐。</li>
+          </ul>
+        </article>
+        <article class="task">
+          <span class="badge teal">代码阶段</span>
+          <h3>实现 SyncOrchestrator</h3>
+          <ul>
+            <li>新增 <code>SyncOrchestrator</code> 类，实现 <code>ISyncOrchestrator</code>。</li>
+            <li>构造函数注入 <code>IAteraClient</code>、<code>IInventoryMapper</code>、<code>ISnipeImporter</code>、可测试时间来源、logger。</li>
+            <li>在 <code>RunOnceAsync</code> 内按 pull -> map -> import 顺序执行。</li>
+            <li>捕获阶段异常并转换为 <code>SyncFailure</code>，不要吞掉 cancellation。</li>
+          </ul>
+        </article>
+        <article class="task">
+          <span class="badge amber">结果阶段</span>
+          <h3>统一聚合输出</h3>
+          <ul>
+            <li>把 <code>AteraPullResult.Warnings</code>、<code>SnipeImportBatch.Warnings</code>、<code>SnipeImportResult.Warnings</code> 合并。</li>
+            <li>把 importer 的 asset-level failures 映射到 run-level failures，保留原始 import result。</li>
+            <li>无失败时 <code>Success = true</code>；有任一阶段失败时 <code>Success = false</code>。</li>
+            <li>始终填充 <code>StartedAt</code> 和 <code>FinishedAt</code>。</li>
+          </ul>
+        </article>
+        <article class="task">
+          <span class="badge green">测试阶段</span>
+          <h3>写 orchestrator 单元测试</h3>
+          <ul>
+            <li>正常流程按顺序调用 pull、mapper、importer。</li>
+            <li>pull 失败时 mapper/importer 都不调用。</li>
+            <li>map 失败时 importer 不调用。</li>
+            <li>import 失败时返回 structured failure。</li>
+            <li>dry-run 与 triggeredBy 正确传递或保留。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 合约速查</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>对象</th>
+            <th>模块 4 怎么用</th>
+            <th>注意点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>SyncRunRequest</code></td>
+            <td>一次 sync run 的完整输入，包含 Atera、Mapping、SnipeIt、Sync 四组配置。</td>
+            <td>Orchestrator 不从全局配置读取 secret 或设置项。</td>
+          </tr>
+          <tr>
+            <td><code>SyncRunOptions</code></td>
+            <td>携带 <code>DryRun</code> 和 <code>TriggeredBy</code>。</td>
+            <td><code>TriggeredBy</code> 可为 scheduled、manual、test；用于结果追踪和日志。</td>
+          </tr>
+          <tr>
+            <td><code>AteraPullResult</code></td>
+            <td>pull 成功后的原始 inventory 快照。</td>
+            <td>失败时不应把半成品继续传给 mapper。</td>
+          </tr>
+          <tr>
+            <td><code>SnipeImportBatch</code></td>
+            <td>Reconstruction 输出，Snipe Import 输入。</td>
+            <td>Orchestrator 不修改字段 mapping 规则。</td>
+          </tr>
+          <tr>
+            <td><code>SnipeImportResult</code></td>
+            <td>import 模块返回 create/update/skip/failure/action/warning 统计。</td>
+            <td>即使 import 有失败，也要保留 result 供 UI/status/report 使用。</td>
+          </tr>
+          <tr>
+            <td><code>SyncRunResult</code></td>
+            <td>模块 4 的最终返回值。</td>
+            <td>后续 Status Store、Scheduler、TrayApp 都应消费这个结构化结果。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>6. 责任边界</h2>
+      <div class="boundary-grid">
+        <article class="boundary">
+          <span class="badge green">应该做</span>
+          <h3>Orchestrator 内部职责</h3>
+          <ul>
+            <li>控制一次 run 的生命周期。</li>
+            <li>按顺序调用三个核心模块。</li>
+            <li>聚合 warnings 和 failures。</li>
+            <li>生成结构化结果。</li>
+            <li>保留 dry-run 和 triggeredBy 语义。</li>
+          </ul>
+        </article>
+        <article class="boundary">
+          <span class="badge red">不应该做</span>
+          <h3>必须留给其他模块</h3>
+          <ul>
+            <li>不直接写 Atera API 或 Snipe-IT API。</li>
+            <li>不做 Atera 到 Snipe-IT 的字段映射。</li>
+            <li>不保存 status 文件。</li>
+            <li>不发送 email 或通知。</li>
+            <li>不包含 TrayApp UI 逻辑。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>7. 参考来源</h2>
+      <div class="source-grid">
+        <article class="source">
+          <h3>当前已有依据</h3>
+          <ul>
+            <li><code>docs/AteraSnipeSync_AI_Agent_Master_Plan.md</code>：Module 4 职责、接口、request/result model、验收条件。</li>
+            <li><code>src/AteraSnipeSync.Core/Sync/</code>：已有 request、options、result、interface 合约。</li>
+            <li><code>src/AteraSnipeSync.Core/Atera/Interfaces/IAteraClient.cs</code></li>
+            <li><code>src/AteraSnipeSync.Core/Mapping/Interfaces/IInventoryMapper.cs</code></li>
+            <li><code>src/AteraSnipeSync.Core/SnipeIt/Interfaces/ISnipeImporter.cs</code></li>
+          </ul>
+        </article>
+        <article class="source">
+          <h3>本次实现结果</h3>
+          <ul>
+            <li>模块 4 的 功能职责、技术规格、单元测试指导手册 已补齐。</li>
+            <li><code>SyncOrchestrator</code> production implementation 已新增。</li>
+            <li>模块 4 专属 orchestrator tests 已覆盖成功路径、失败短路、dry-run 传递、warning 聚合和 cancellation。</li>
+          </ul>
+        </article>
+      </div>
+      <p class="note compact">当前状态：模块 4 已按项目流程完成文档、production code、unit tests 和测试指导手册；验证命令为 <code>dotnet build</code> 与 <code>dotnet test</code>。</p>
+    </section>
+  </main>
+</body>
+</html>

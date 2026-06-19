@@ -171,7 +171,7 @@ public sealed class AteraPullRequest
 ```csharp
 public sealed class AteraPullResult
 {
-    public required IReadOnlyList<AteraAgentDto> Agents { get; init; }
+    public required IReadOnlyList<AgentInfo> Agents { get; init; }
     public required IReadOnlyList<AteraCustomerDto> Customers { get; init; }
     public required PullSummary Summary { get; init; }
     public required IReadOnlyList<ModuleWarning> Warnings { get; init; }

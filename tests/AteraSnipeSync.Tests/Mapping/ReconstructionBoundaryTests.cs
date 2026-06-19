@@ -12,32 +12,32 @@ public sealed class ReconstructionBoundaryTests
         {
             Agents =
             [
-                new AteraAgentDto
+                new AgentInfo
                 {
                     AgentId = "12345",
                     Name = "LAPTOP-001",
-                    SerialNumber = "ABC123",
+                    RawJson = "{}",
+                    VendorSerialNumber = "ABC123",
                     CustomerId = "500",
                     CustomerName = "Acme Support",
-                    Manufacturer = "Lenovo",
-                    Model = "ThinkPad T14"
+                    Vendor = "Lenovo",
+                    VendorBrandModel = "ThinkPad T14"
                 },
-                new AteraAgentDto
+                new AgentInfo
                 {
                     AgentId = "67890",
                     Name = "DESKTOP-002",
-                    SerialNumber = null,
+                    RawJson = "{}",
+                    VendorSerialNumber = null,
                     CustomerId = "501",
                     CustomerName = "Branch Office",
-                    Manufacturer = null,
-                    Model = "OptiPlex 7000"
+                    Vendor = null,
+                    VendorBrandModel = "OptiPlex 7000"
                 }
             ],
-            Customers = [],
             Summary = new PullSummary
             {
                 AgentCount = 2,
-                CustomerCount = 0,
                 PulledAt = DateTimeOffset.UtcNow
             },
             Warnings = []

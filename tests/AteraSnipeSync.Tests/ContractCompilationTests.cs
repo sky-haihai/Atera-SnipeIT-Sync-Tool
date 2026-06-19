@@ -16,11 +16,9 @@ public sealed class ContractCompilationTests
         var pullResult = new AteraPullResult
         {
             Agents = [],
-            Customers = [],
             Summary = new PullSummary
             {
                 AgentCount = 0,
-                CustomerCount = 0,
                 PulledAt = DateTimeOffset.UtcNow
             },
             Warnings = []
@@ -89,11 +87,9 @@ public sealed class ContractCompilationTests
             return Task.FromResult(new AteraPullResult
             {
                 Agents = [],
-                Customers = [],
                 Summary = new PullSummary
                 {
                     AgentCount = 0,
-                    CustomerCount = 0,
                     PulledAt = DateTimeOffset.UtcNow
                 },
                 Warnings = []

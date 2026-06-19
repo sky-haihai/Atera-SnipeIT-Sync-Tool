@@ -6,7 +6,7 @@ namespace AteraSnipeSync.Core.Mapping;
 internal static class MappingValueResolver
 {
     public static string ResolveCompanyName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings)
     {
@@ -22,7 +22,7 @@ internal static class MappingValueResolver
     }
 
     public static string ResolveManufacturerName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings)
     {
@@ -38,7 +38,7 @@ internal static class MappingValueResolver
     }
 
     public static string ResolveModelName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings)
     {
@@ -54,7 +54,7 @@ internal static class MappingValueResolver
     }
 
     public static string ResolveCategoryName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options)
     {
         return options.DefaultCategoryName;

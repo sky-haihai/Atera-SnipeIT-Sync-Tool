@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snipe-IT Import 比较与导入流程</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #586370;
+      --line: #d8dee6;
+      --paper: #fbfcfe;
+      --panel: #ffffff;
+      --blue: #265f9f;
+      --teal: #0f766e;
+      --amber: #9a6700;
+      --red: #b42318;
+      --green: #247144;
+      --wash-blue: #eaf3ff;
+      --wash-teal: #e8f7f4;
+      --wash-amber: #fff6df;
+      --wash-red: #fff0ed;
+      --shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.55;
+    }
+
+    header {
+      background: #f1f5f9;
+      border-bottom: 1px solid var(--line);
+      padding: 32px 24px 24px;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.2;
+    }
+
+    h1 {
+      max-width: 1180px;
+      margin: 0 auto;
+      font-size: 32px;
+      font-weight: 700;
+    }
+
+    .subtitle {
+      max-width: 1180px;
+      margin: 12px auto 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    section {
+      margin-top: 28px;
+    }
+
+    .band {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 22px;
+    }
+
+    .status-grid,
+    .priority-grid,
+    .flow-grid,
+    .decision-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .priority-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .flow-grid {
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .decision-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .tile {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 16px;
+      min-height: 120px;
+    }
+
+    .tile h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    .tile p,
+    .tile li {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tile p {
+      margin: 0;
+    }
+
+    .tile ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .pill.blue {
+      color: var(--blue);
+      background: var(--wash-blue);
+    }
+
+    .pill.teal {
+      color: var(--teal);
+      background: var(--wash-teal);
+    }
+
+    .pill.amber {
+      color: var(--amber);
+      background: var(--wash-amber);
+    }
+
+    .pill.red {
+      color: var(--red);
+      background: var(--wash-red);
+    }
+
+    .callout {
+      border-left: 4px solid var(--amber);
+      background: var(--wash-amber);
+      padding: 14px 16px;
+      border-radius: 6px;
+      color: #463600;
+    }
+
+    .callout strong {
+      color: #332500;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #263445;
+      font-weight: 700;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      background: #eef2f7;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 0.92em;
+    }
+
+    .flow-step {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      min-width: 150px;
+    }
+
+    .flow-step::after {
+      content: ">";
+      position: absolute;
+      right: -13px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .flow-step:last-child::after {
+      content: "";
+    }
+
+    .flow-step h3 {
+      font-size: 15px;
+      margin-bottom: 8px;
+    }
+
+    .flow-step p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .list {
+      margin: 10px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+    }
+
+    .source-list {
+      margin: 8px 0 0;
+      padding-left: 20px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    @media (max-width: 900px) {
+      .status-grid,
+      .priority-grid,
+      .decision-grid,
+      .split {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Snipe-IT Import 比较与导入流程</h1>
+    <p class="subtitle">
+      基于当前本地实现规格和代码整理；匹配优先级已按最新要求实现为 MAC address、serial number、名称高相似度。
+      MAC 通过可配置的 Snipe-IT custom field db column 进行比较。
+    </p>
+  </header>
+
+  <main>
+    <section class="band">
+      <h2>规格状态</h2>
+      <div class="status-grid" style="margin-top: 16px;">
+        <article class="tile">
+          <span class="pill blue">已有</span>
+          <h3>核心契约已 scaffold</h3>
+          <p>
+            <code>ISnipeImporter</code>、<code>SnipeImportOptions</code>、<code>SnipeImportResult</code>、
+            <code>SnipeImportBatch</code> 和 <code>SnipeAssetImportRecord</code> 已存在。
+          </p>
+        </article>
+        <article class="tile">
+          <span class="pill teal">已补齐</span>
+          <h3>Snipe Import 专属文档已展开</h3>
+          <p>
+            <code>03-SnipeImport-功能职责.md</code>、<code>03-SnipeImport-技术规格.md</code>、
+            <code>03-SnipeImport-单元测试指导手册.md</code> 已按模块开发顺序补齐。
+          </p>
+        </article>
+        <article class="tile">
+          <span class="pill teal">已实现</span>
+          <h3>导入记录已包含 MAC 字段</h3>
+          <p>
+            <code>SnipeAssetImportRecord.MacAddresses</code> 已加入，<code>InventoryMapper</code> 会从
+            Atera <code>AgentInfo.MacAddresses</code> 传递到 Import 模块。
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>比较优先级</h2>
+      <div class="priority-grid" style="margin-top: 16px;">
+        <article class="tile">
+          <span class="pill teal">Priority 1</span>
+          <h3>MAC address 精确匹配</h3>
+          <p>
+            导入前先规范化 MAC 地址，再查找 Snipe-IT 中是否存在同一硬件身份。只允许唯一命中自动更新。
+          </p>
+        </article>
+        <article class="tile">
+          <span class="pill blue">Priority 2</span>
+          <h3>Serial number 精确匹配</h3>
+          <p>
+            MAC 未命中时使用 serial number。serial 仍是强身份，但不再是第一优先级。
+          </p>
+        </article>
+        <article class="tile">
+          <span class="pill amber">Priority 3</span>
+          <h3>Asset name 高相似度匹配</h3>
+          <p>
+            MAC 和 serial 都未命中时，才使用名称相似度。必须是单一、高置信度候选，否则跳过或记录待人工确认。
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>比较规则矩阵</h2>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>顺序</th>
+            <th>比较键</th>
+            <th>规范化建议</th>
+            <th>自动更新条件</th>
+            <th>失败/歧义处理</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>MAC address</td>
+            <td>去分隔符、去空白、统一大小写；忽略空值和明显无效值。</td>
+            <td>至少一个导入 MAC 与一个 Snipe-IT asset 唯一匹配。</td>
+            <td>多个 asset 命中同一 MAC 时，不更新，记录 ambiguous match failure。</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>Serial number</td>
+            <td>trim、统一大小写策略；空白、占位值或未知值不参与匹配。</td>
+            <td>MAC 无唯一命中，serial 与一个 Snipe-IT asset 唯一匹配。</td>
+            <td>多个 serial 命中时，不继续按名称覆盖，记录 duplicate serial failure。</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Asset name</td>
+            <td>trim、压缩空白、大小写归一、可忽略常见后缀；具体算法在技术规格中定。</td>
+            <td>MAC/serial 均无命中，且只有一个名称候选达到“很高相似度”。</td>
+            <td>没有高置信度候选则创建新 asset；多个高分候选则跳过并记录待人工确认。</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="callout" style="margin-top: 16px;">
+        <strong>实现状态：</strong>
+        Snipe Import 技术规格和代码已采用“MAC 优先、serial 第二、名称高相似度第三”。早期总策划案中
+        “serial primary identity”的描述已被本模块规格覆盖；后续如维护总策划案，可同步更新该概述。
+      </p>
+    </section>
+
+    <section class="band">
+      <h2>导入主流程</h2>
+      <div class="flow-grid" style="margin-top: 16px;">
+        <article class="flow-step">
+          <h3>1. 接收 batch</h3>
+          <p>读取 <code>SnipeImportBatch</code>、import options、dry-run 标志。</p>
+        </article>
+        <article class="flow-step">
+          <h3>2. 校验记录</h3>
+          <p>检查 name、company、model、status、MAC/serial 等匹配输入。</p>
+        </article>
+        <article class="flow-step">
+          <h3>3. 确保依赖</h3>
+          <p>ensure company，ensure model；dry-run 只生成计划动作。</p>
+        </article>
+        <article class="flow-step">
+          <h3>4. 比较 asset</h3>
+          <p>按 MAC、serial、名称高相似度顺序找现有 asset。</p>
+        </article>
+        <article class="flow-step">
+          <h3>5. 决策动作</h3>
+          <p>唯一命中则 update；无命中则 create；歧义则 skip/fail。</p>
+        </article>
+        <article class="flow-step">
+          <h3>6. 汇总结果</h3>
+          <p>返回 created、updated、skipped、failed、warnings、actions。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>单条 Asset 决策树</h2>
+      <div class="decision-grid" style="margin-top: 16px;">
+        <article class="tile">
+          <span class="pill teal">Match path</span>
+          <h3>查找顺序</h3>
+          <ul>
+            <li>如果存在有效 MAC，优先查 MAC。</li>
+            <li>如果 MAC 唯一命中，计划 update，不再继续 serial/name 匹配。</li>
+            <li>如果 MAC 未命中，查 serial。</li>
+            <li>如果 serial 唯一命中，计划 update。</li>
+            <li>如果 MAC/serial 都未命中，执行名称高相似度比较。</li>
+            <li>如果名称只有一个高置信度候选，计划 update。</li>
+          </ul>
+        </article>
+        <article class="tile">
+          <span class="pill amber">Create or stop</span>
+          <h3>无命中与歧义</h3>
+          <ul>
+            <li>没有任何候选时，计划 create hardware asset。</li>
+            <li>多个 MAC 命中、多个 serial 命中，或多个名称高分候选时，不自动更新。</li>
+            <li>依赖 company/model 缺失且不允许创建时，跳过该 asset。</li>
+            <li>dry-run 下所有写入动作都只记录 <code>WasExecuted = false</code>。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>导入动作语义</h2>
+      <table style="margin-top: 16px;">
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>动作</th>
+            <th>结果计数</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>MAC 唯一命中</td>
+            <td>Update existing asset</td>
+            <td><code>UpdatedAssets += 1</code></td>
+            <td>最高置信度路径。</td>
+          </tr>
+          <tr>
+            <td>MAC 未命中，serial 唯一命中</td>
+            <td>Update existing asset</td>
+            <td><code>UpdatedAssets += 1</code></td>
+            <td>第二层强身份路径。</td>
+          </tr>
+          <tr>
+            <td>MAC/serial 未命中，名称单一高相似候选</td>
+            <td>Update existing asset</td>
+            <td><code>UpdatedAssets += 1</code></td>
+            <td>低于强身份匹配，建议在 action message 中标注 match reason。</td>
+          </tr>
+          <tr>
+            <td>没有匹配到 asset</td>
+            <td>Create hardware asset</td>
+            <td><code>CreatedAssets += 1</code></td>
+            <td>需要 company/model/status 等依赖已经可用。</td>
+          </tr>
+          <tr>
+            <td>匹配结果歧义</td>
+            <td>Skip or fail item</td>
+            <td><code>SkippedAssets</code> 或 <code>FailedAssets</code></td>
+            <td>建议作为 failure，因为自动更新可能覆盖错误资产。</td>
+          </tr>
+          <tr>
+            <td>Snipe-IT 返回 HTTP 200 但 JSON body 为 error</td>
+            <td>Fail item</td>
+            <td><code>FailedAssets += 1</code></td>
+            <td>必须读取 response body 的业务状态，不能只看 HTTP status。</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="band">
+      <h2>实现要点</h2>
+      <div class="split" style="margin-top: 16px;">
+        <article class="tile">
+          <span class="pill blue">Contract</span>
+          <h3>已补充的输入数据</h3>
+          <ul>
+            <li><code>SnipeAssetImportRecord</code> 已加入 MAC 地址集合。</li>
+            <li>MAC 来源为 Atera <code>AgentInfo.MacAddresses</code>，经 Reconstruction 传入 Import。</li>
+            <li><code>SnipeImportOptions.MacAddressCustomFieldDbColumnName</code> 指定 Snipe-IT custom field db column。</li>
+          </ul>
+        </article>
+        <article class="tile">
+          <span class="pill teal">Spec</span>
+          <h3>已写入技术规格的规则</h3>
+          <ul>
+            <li>MAC/serial/name 的 normalized value 规则。</li>
+            <li>名称相似度算法和 <code>NameMatchThreshold</code> 配置。</li>
+            <li>唯一命中、无命中、多个命中、API error body 的 failure code。</li>
+            <li>dry-run 下每一步哪些查询允许执行、哪些写入禁止执行。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="band">
+      <h2>参考来源</h2>
+      <ul class="source-list">
+        <li><code>docs/AteraSnipeSync_AI_Agent_Master_Plan.md</code>：Module 3 的职责、输入输出、dry-run 与 result model。</li>
+        <li><code>docs/technical-specs/02-Reconstruction-技术规格.md</code>：当前 mapping 输出契约和现有 serial identity 规则。</li>
+        <li><code>src/AteraSnipeSync.Core/Atera/AgentInfo.cs</code>：Atera agent 中已有 <code>MacAddresses</code> 来源字段。</li>
+        <li><code>src/AteraSnipeSync.Core/SnipeIt/SnipeAssetImportRecord.cs</code>：import record 已包含 <code>MacAddresses</code>。</li>
+        <li>Snipe-IT API 官方 OpenAPI：已核验 `/companies`、`/manufacturers`、`/categories`、`/models`、`/hardware`、`/hardware/byserial/{serial}`、`/hardware/{id}`。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

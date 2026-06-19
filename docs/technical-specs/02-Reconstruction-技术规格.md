@@ -141,7 +141,7 @@ Signature:
 ```csharp
 internal static class AssetTagFactory
 {
-    public static string Create(AteraAgentDto agent);
+    public static string Create(AgentInfo agent);
 }
 ```
 
@@ -169,22 +169,22 @@ Signature:
 internal static class MappingValueResolver
 {
     public static string ResolveCompanyName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings);
 
     public static string ResolveManufacturerName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings);
 
     public static string ResolveModelName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options,
         ICollection<ModuleWarning> warnings);
 
     public static string ResolveCategoryName(
-        AteraAgentDto agent,
+        AgentInfo agent,
         MappingOptions options);
 }
 ```
@@ -215,7 +215,7 @@ Signature:
 ```csharp
 internal static class NotesBuilder
 {
-    public static string Build(AteraAgentDto agent);
+    public static string Build(AgentInfo agent);
 }
 ```
 
@@ -250,11 +250,11 @@ Signature:
 ```csharp
 internal static class MappingWarningFactory
 {
-    public static ModuleWarning MissingAgentIdentity(AteraAgentDto agent);
-    public static ModuleWarning MissingSerialNumber(AteraAgentDto agent);
-    public static ModuleWarning MissingCompany(AteraAgentDto agent);
-    public static ModuleWarning MissingManufacturer(AteraAgentDto agent);
-    public static ModuleWarning MissingModel(AteraAgentDto agent);
+    public static ModuleWarning MissingAgentIdentity(AgentInfo agent);
+    public static ModuleWarning MissingSerialNumber(AgentInfo agent);
+    public static ModuleWarning MissingCompany(AgentInfo agent);
+    public static ModuleWarning MissingManufacturer(AgentInfo agent);
+    public static ModuleWarning MissingModel(AgentInfo agent);
 }
 ```
 
@@ -271,7 +271,7 @@ Warning contract：
 
 ## 4. Mapping 行为
 
-对每个 `AteraAgentDto agent`：
+对每个 `AgentInfo agent`：
 
 1. 如果 `agent.SerialNumber` 和 `agent.AgentId` 都为空白：
    - 不生成 `SnipeAssetImportRecord`

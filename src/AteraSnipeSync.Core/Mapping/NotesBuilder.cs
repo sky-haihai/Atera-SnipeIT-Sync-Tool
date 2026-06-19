@@ -4,7 +4,7 @@ namespace AteraSnipeSync.Core.Mapping;
 
 internal static class NotesBuilder
 {
-    public static string Build(AteraAgentDto agent)
+    public static string Build(AgentInfo agent)
     {
         return string.Join(
             Environment.NewLine,

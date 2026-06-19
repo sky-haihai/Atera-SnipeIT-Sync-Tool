@@ -17,6 +17,7 @@ public sealed class InventoryMapperTests
         Assert.Equal("SN-001", asset.AssetTag);
         Assert.Equal("SN-001", asset.Serial);
         Assert.Equal("Device 1", asset.Name);
+        Assert.Equal(["00-11-22-33-44-55"], asset.MacAddresses);
         Assert.Equal("Atera", asset.SourceSystem);
         Assert.Equal("1001", asset.SourceId);
         Assert.Contains("Atera Agent ID: 1001", asset.Notes);
@@ -134,7 +135,7 @@ public sealed class InventoryMapperTests
         };
     }
 
-    private static AteraAgentDto CreateAgent(
+    private static AgentInfo CreateAgent(
         string agentId = "1001",
         string name = "Device 1",
         string? serialNumber = "SN-001",
@@ -143,28 +144,28 @@ public sealed class InventoryMapperTests
         string? manufacturer = "Dell",
         string? model = "Latitude")
     {
-        return new AteraAgentDto
+        return new AgentInfo
         {
             AgentId = agentId,
             Name = name,
-            SerialNumber = serialNumber,
+            RawJson = "{}",
+            MacAddresses = ["00-11-22-33-44-55"],
+            VendorSerialNumber = serialNumber,
             CustomerId = customerId,
             CustomerName = customerName,
-            Manufacturer = manufacturer,
-            Model = model
+            Vendor = manufacturer,
+            VendorBrandModel = model
         };
     }
 
-    private static AteraPullResult CreatePullResult(params AteraAgentDto[] agents)
+    private static AteraPullResult CreatePullResult(params AgentInfo[] agents)
     {
         return new AteraPullResult
         {
             Agents = agents,
-            Customers = [],
             Summary = new PullSummary
             {
                 AgentCount = agents.Length,
-                CustomerCount = 0,
                 PulledAt = DateTimeOffset.UtcNow
             },
             Warnings = []

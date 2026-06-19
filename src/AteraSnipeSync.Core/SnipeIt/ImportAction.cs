@@ -1,5 +1,8 @@
 namespace AteraSnipeSync.Core.SnipeIt;
 
+/// <summary>
+/// Records one planned or executed import operation for audit-friendly import results.
+/// </summary>
 public sealed class ImportAction
 {
     public required string ActionType { get; init; }
