@@ -87,8 +87,9 @@ Passed! - Failed: 0, Passed: 72, Skipped: 0, Total: 72
 6. `RunOnceAsync_ConvertsImportFailuresToRunFailures`
 7. `RunOnceAsync_AppliesSyncDryRunToSnipeOptions`
 8. `RunOnceAsync_RethrowsOperationCanceledException`
-9. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
-10. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
+9. `RunOnceAsync_ReportsStageProgress`
+10. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
+11. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
 
 ## 6. 重点断言
 

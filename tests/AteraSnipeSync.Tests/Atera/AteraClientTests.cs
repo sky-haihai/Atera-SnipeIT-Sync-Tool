@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using AteraSnipeSync.Core.Atera;
+using AteraSnipeSync.Core.Common;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -86,6 +87,22 @@ public sealed class AteraClientTests
         Assert.Equal(2, handler.Requests.Count);
         Assert.Contains("page=1", handler.Requests[0].RequestUri.Query);
         Assert.Contains("page=2", handler.Requests[1].RequestUri.Query);
+    }
+
+    [Fact]
+    public async Task PullInventoryAsync_ReportsProgress_WhenPagesComplete()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, Envelope(MinimalAgentJson("1001", "DEVICE-001"), totalItemCount: 2, page: 1, totalPages: 2));
+        handler.QueueResponse(HttpStatusCode.OK, Envelope(MinimalAgentJson("1002", "DEVICE-002"), totalItemCount: 2, page: 2, totalPages: 2));
+        var client = CreateClient(handler);
+        var updates = new List<SyncProgressUpdate>();
+
+        await client.PullInventoryAsync(CreateRequest(), CancellationToken.None, new CapturingProgress(updates));
+
+        Assert.Contains(updates, update => update.Stage == "AteraPull" && update.Message.Contains("Requesting Atera agents page 1", StringComparison.Ordinal));
+        Assert.Contains(updates, update => update.Stage == "AteraPull" && update.Current == 1 && update.Total == 2);
+        Assert.Contains(updates, update => update.Stage == "AteraPull" && update.Message.Contains("Completed Atera inventory pull", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -273,6 +290,14 @@ public sealed class AteraClientTests
           "nextLink": null
         }
         """;
+    }
+
+    private sealed class CapturingProgress(List<SyncProgressUpdate> updates) : IProgress<SyncProgressUpdate>
+    {
+        public void Report(SyncProgressUpdate value)
+        {
+            updates.Add(value);
+        }
     }
 
     private static string MinimalAgentJson(string agentId, string machineName)

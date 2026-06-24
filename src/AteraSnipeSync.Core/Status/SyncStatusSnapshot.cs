@@ -1,5 +1,8 @@
 namespace AteraSnipeSync.Core.Status;
 
+/// <summary>
+/// Presents the latest completed sync run as a compact status view for UI and operational checks.
+/// </summary>
 public sealed class SyncStatusSnapshot
 {
     public required bool IsRunning { get; init; }

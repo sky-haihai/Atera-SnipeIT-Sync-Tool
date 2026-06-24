@@ -95,7 +95,8 @@ public sealed class SnipeImporter : ISnipeImporter
     public Task<SnipeImportResult> ImportAsync(
         SnipeImportBatch batch,
         SnipeImportOptions options,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress = null);
 }
 ```
 
@@ -108,9 +109,11 @@ public sealed class SnipeImporter : ISnipeImporter
 - resolve manufacturer
 - ensure model
 - find matching asset by MAC, then serial, then high-similarity name
+- plan unique company/category/manufacturer/model references before asset matching
 - create or update asset
 - append `Auto Synced from Atera at {UTC timestamp}` to asset notes when create/update payload is built
-- when manual preflight CSV is enabled, write all planned company/model/asset changes to temporary CSV before any possible real write
+- when manual preflight CSV is enabled, write all planned company/category/model/asset changes to temporary CSV before any possible real write
+- report optional safe progress during reference planning, asset matching, CSV writing, dry-run application, and execution
 - aggregate actions/failures/warnings/result counters
 
 ### 3.2 `SnipeImportPreflightCsvWriter`
@@ -147,6 +150,7 @@ CSV files:
 ```text
 snipeit-assets-plan.csv
 snipeit-companies-plan.csv
+snipeit-categories-plan.csv
 snipeit-models-plan.csv
 ```
 
@@ -174,6 +178,7 @@ Signature:
 internal sealed class SnipeImportPreflightPlan
 {
     public required IReadOnlyList<SnipeCompanyPlanRow> Companies { get; init; }
+    public required IReadOnlyList<SnipeCategoryPlanRow> Categories { get; init; }
     public required IReadOnlyList<SnipeModelPlanRow> Models { get; init; }
     public required IReadOnlyList<SnipeAssetPlanRow> Assets { get; init; }
 }
@@ -209,7 +214,32 @@ Allowed current operations:
 
 - `Add`
 
-### 3.5 `SnipeModelPlanRow`
+### 3.5 `SnipeCategoryPlanRow`
+
+Signature:
+
+```csharp
+internal sealed class SnipeCategoryPlanRow
+{
+    public required string Operation { get; init; }
+    public required string CategoryName { get; init; }
+    public required string CategoryType { get; init; }
+}
+```
+
+CSV columns:
+
+```text
+Operation,CategoryName,CategoryType
+```
+
+Allowed current operations:
+
+- `Add`
+
+`CategoryType` must be `asset` for categories created to support hardware assets.
+
+### 3.6 `SnipeModelPlanRow`
 
 Signature:
 
@@ -237,7 +267,7 @@ Allowed current operations:
 
 - `Add`
 
-### 3.6 `SnipeAssetPlanRow`
+### 3.7 `SnipeAssetPlanRow`
 
 Signature:
 
@@ -246,38 +276,30 @@ internal sealed class SnipeAssetPlanRow
 {
     public required string Operation { get; init; }
     public required string AssetTag { get; init; }
-    public required string AssetName { get; init; }
-    public int? ExistingAssetId { get; init; }
-    public string? MatchType { get; init; }
+    public required string Name { get; init; }
     public string? Serial { get; init; }
-    public required string MacAddresses { get; init; }
     public required string CompanyName { get; init; }
-    public int? CompanyId { get; init; }
     public required string ModelName { get; init; }
-    public int? ModelId { get; init; }
-    public int StatusId { get; init; }
-    public required string NotesPreview { get; init; }
-    public string? Reason { get; init; }
+    public required string CategoryName { get; init; }
+    public required string ManufacturerName { get; init; }
+    public int? ExistingAssetId { get; init; }
+    public string? ExistingAssetTag { get; init; }
+    public string? FailureCode { get; init; }
+    public string? FailureMessage { get; init; }
 }
 ```
 
 CSV columns:
 
 ```text
-Operation,AssetTag,AssetName,ExistingAssetId,MatchType,Serial,MacAddresses,CompanyName,CompanyId,ModelName,ModelId,StatusId,NotesPreview,Reason
+Operation,AssetTag,Name,Serial,CompanyName,ModelName,CategoryName,ManufacturerName,ExistingAssetId,ExistingAssetTag,FailureCode,FailureMessage
 ```
 
 Allowed current operations:
 
 - `Add`
 - `Modify`
-
-`MatchType` values:
-
-- `MacAddress`
-- `SerialNumber`
-- `NameSimilarity`
-- empty for asset create
+- `Blocked`
 
 ### 3.7 `MacAddressNormalizer`
 
@@ -396,10 +418,20 @@ First version does not create manufacturers.
 Find:
 
 ```text
-GET /categories?search={categoryName}
+GET /categories?search={categoryName}&category_type=asset
 ```
 
-First version does not create categories because official `POST /categories` requires `category_type`, and this module does not own category policy.
+Create when missing:
+
+```text
+POST /categories
+{
+  "name": "...",
+  "category_type": "asset"
+}
+```
+
+The category policy for this module is intentionally narrow: every Atera agent asset uses one operator-provided asset category name, defaulting to `Computer`, and missing categories are created with Snipe-IT `category_type = asset`.
 
 ### 4.4 Models
 
@@ -421,6 +453,8 @@ POST /models
 ```
 
 `manufacturer_id` is included only when manufacturer was found.
+
+When a model depends on a category that will be created in the same run, the model plan leaves `CategoryId` empty during preview and the real run creates the category before posting the model.
 
 ### 4.5 Hardware list search
 
@@ -520,14 +554,14 @@ Current writable Snipe-IT object types:
 | Object type | Current operations | CSV file |
 | --- | --- | --- |
 | Company | Add | `snipeit-companies-plan.csv` |
+| Category | Add | `snipeit-categories-plan.csv` |
 | Model | Add | `snipeit-models-plan.csv` |
-| Hardware asset | Add, Modify | `snipeit-assets-plan.csv` |
+| Hardware asset | Add, Modify, Blocked | `snipeit-assets-plan.csv` |
 
 Current read-only object types:
 
 | Object type | Behavior | CSV write-plan table |
 | --- | --- | --- |
-| Category | lookup only | none |
 | Manufacturer | lookup only | none |
 
 No current object type emits `Delete`. Delete is reserved because future sync policy may support asset archive/delete, but first version must not delete Snipe-IT objects.
@@ -550,10 +584,17 @@ The TrayApp `Preview Changes` path must call the importer through a request with
 Some IDs are unknown before writes occur. For example:
 
 - new company id is unknown before `POST /companies`
+- new category id is unknown before `POST /categories`
 - new model id is unknown before `POST /models`
 - new asset id is unknown before `POST /hardware`
 
 CSV rows should leave those id columns empty when the target does not exist yet.
+
+When a record cannot be fully planned, for example because a required company
+or model is missing and creation is disabled, `snipeit-assets-plan.csv` must
+still include a row for that source asset. The row operation must be `Blocked`,
+existing asset id/tag columns must be empty when no match was resolved, and
+`FailureCode` / `FailureMessage` must explain why the asset cannot proceed.
 
 ### 6.3 CSV formatting rules
 
@@ -565,49 +606,61 @@ CSV rows should leave those id columns empty when the target does not exist yet.
 - Do not include full raw Atera JSON
 - Write empty CSV files with headers even if there are no rows for that object type
 - Use ISO-8601 UTC timestamps where timestamps are included in preview fields
+- `snipeit-assets-plan.csv` must include `FailureCode` and `FailureMessage` columns so blocked records remain visible during manual review
 
 ## 7. Import Algorithm
 
-For each `SnipeAssetImportRecord record`:
+For each import run:
 
-1. Validate required record fields.
-2. Resolve company:
-   - find by name
-   - create if missing and allowed
-   - fail record if missing and not allowed
-3. Resolve category:
-   - find by name
-   - fail record if missing
-4. Resolve manufacturer:
-   - find by name
-   - if missing, continue without manufacturer id and add warning
-5. Resolve model:
-   - find by model name/category id
-   - create if missing and allowed
-   - fail record if missing and not allowed
-6. Find existing asset:
+1. Validate required fields for every `SnipeAssetImportRecord`.
+2. Build shared reference plans before asset matching:
+   - scan valid records for unique company names
+   - find each company by name
+   - plan company creation when missing and allowed
+   - record one company failure when missing and creation is disabled
+   - scan records with successful company plans for unique category names
+   - find each category by name
+   - plan category creation with `category_type = asset` when missing
+   - scan records with successful company/category plans for unique manufacturer names
+   - find each manufacturer by name
+   - if missing, continue without manufacturer id and add one warning for that manufacturer
+   - scan records with successful company/category/manufacturer plans for unique model keys
+   - model key is model name + category id or planned category name + manufacturer id
+   - find each model by model name/category id when the category already exists
+   - plan model creation when missing and allowed
+   - record one model failure when missing and creation is disabled
+3. Scan valid records for asset plans:
+   - first apply any stored company/category/manufacturer/model reference failure to the asset
+   - blocked assets must be added to failed preflight rows and must not query `GET /hardware`
+4. Find existing asset for records with successful reference plans:
    - try MAC comparison first when configured and valid MAC exists
    - try serial lookup second when serial exists
    - try name high-similarity comparison third
-7. Decide write:
+5. Decide write:
    - match found: update
    - no match: create
    - ambiguous match: fail record
-8. Add planned write rows:
+6. Add planned write rows:
    - company add row when missing company will be created
+   - category add row when missing asset category will be created
    - model add row when missing model will be created
    - asset add row when no existing asset matched
    - asset modify row when an existing asset matched
-9. In manual preflight CSV flow:
+7. In manual preflight CSV flow:
    - write `snipeit-companies-plan.csv`
+   - write `snipeit-categories-plan.csv`
    - write `snipeit-models-plan.csv`
    - write `snipeit-assets-plan.csv`
    - stop before real writes if CSV writing fails
-10. In dry-run:
+8. In dry-run:
    - do not execute POST/PATCH
    - add planned action with `WasExecuted = false`
-11. In real run:
-   - execute POST/PATCH
+9. In real run:
+   - create all missing companies
+   - create all missing categories
+   - create all missing models
+   - only after all reference writes succeed, execute asset POST/PATCH
+   - if any reference write fails, mark planned assets failed and stop before hardware writes
    - add executed action with `WasExecuted = true`
    - asset create/update payload notes must include the automatic sync timestamp line
 
@@ -620,6 +673,7 @@ Counters represent planned actions in dry-run and executed actions in real run.
 - `SkippedAssets`: increment only when record is intentionally skipped without failure
 - `FailedAssets`: increment for each failed record
 - `CreatedCompanies`: increment when company create action is planned or executed
+- `CreatedCategories`: increment when category create action is planned or executed
 - `CreatedModels`: increment when model create action is planned or executed
 
 ## 9. Failure Codes
@@ -664,12 +718,16 @@ Required tests:
 5. `ImportAsync_DoesNotWrite_WhenDryRun`
 6. `ImportAsync_CreatesMissingCompany_WhenAllowed`
 7. `ImportAsync_CreatesMissingModel_WhenAllowed`
-8. `ImportAsync_FailsRecord_WhenCategoryMissing`
-9. `ImportAsync_FailsRecord_WhenMacMatchIsAmbiguous`
-10. `ImportAsync_TreatsStatusErrorBodyAsFailure_WhenHttpStatusIsOk`
-11. `ImportAsync_AddsAutoSyncedNoteToCreateAndUpdatePayloads`
-12. `ImportAsync_WritesManualPreflightCsvBeforePostOrPatch_WhenManualPreflightEnabled`
-13. `ImportAsync_DoesNotPostOrPatch_WhenManualPreflightCsvWriteFails`
+8. `ImportAsync_CreatesMissingCategory_WhenCategoryMissing`
+9. `ImportAsync_CreatesAllMissingReferencesBeforeHardwareWrites`
+10. `ImportAsync_FailsRecord_WhenMacMatchIsAmbiguous`
+11. `ImportAsync_TreatsStatusErrorBodyAsFailure_WhenHttpStatusIsOk`
+12. `ImportAsync_AddsAutoSyncedNoteToCreateAndUpdatePayloads`
+13. `ImportAsync_WritesManualPreflightCsvBeforePostOrPatch_WhenManualPreflightEnabled`
+14. `ImportAsync_WritesMissingCategoryPreflightCsv_WhenCategoryWillBeCreated`
+15. `ImportAsync_DoesNotPostOrPatch_WhenManualPreflightCsvWriteFails`
+16. `ImportAsync_ReportsProgressDuringPlanning`
+17. `ImportAsync_ReusesReferenceLookups_ForRepeatedReferenceNames`
 
 Update mapping tests:
 
@@ -681,7 +739,8 @@ Update mapping tests:
 - automated tests use mocked HTTP handlers only
 - no real Snipe-IT API call in tests
 - API token is not logged or written to result messages
-- manual preflight CSV creates `snipeit-assets-plan.csv`, `snipeit-companies-plan.csv`, and `snipeit-models-plan.csv` before any real manual sync write
+- manual preflight CSV creates `snipeit-assets-plan.csv`, `snipeit-companies-plan.csv`, `snipeit-categories-plan.csv`, and `snipeit-models-plan.csv` before any real manual sync write
+- missing categories are planned and created as Snipe-IT asset categories with `category_type = asset`
 - manual preflight CSVs include `Operation` values using `Add`, `Modify`, or reserved `Delete`
 - first version never emits `Delete`
 - CSV write failure prevents real Snipe-IT writes

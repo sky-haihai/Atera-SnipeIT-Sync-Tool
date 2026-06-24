@@ -53,6 +53,23 @@ public sealed class InventoryMapperTests
     }
 
     [Fact]
+    public void Map_UsesCompanyAlias_WhenCustomerNameMatchesAlias()
+    {
+        var options = CreateDefaultOptions(
+            new Dictionary<string, string>
+            {
+                [" moore equine veterinary centre - ar "] = "Moore Equine Veterinary Centre"
+            });
+        var source = CreatePullResult(CreateAgent(customerName: "Moore Equine Veterinary Centre - AR"));
+        var mapper = new InventoryMapper();
+
+        var result = mapper.Map(source, options);
+
+        var asset = Assert.Single(result.Assets);
+        Assert.Equal("Moore Equine Veterinary Centre", asset.CompanyName);
+    }
+
+    [Fact]
     public void Map_UsesDefaultManufacturerAndAddsWarning_WhenManufacturerMissing()
     {
         var options = CreateDefaultOptions();
@@ -123,7 +140,7 @@ public sealed class InventoryMapperTests
         Assert.Throws<ArgumentNullException>(() => mapper.Map(CreatePullResult(CreateAgent()), null!));
     }
 
-    private static MappingOptions CreateDefaultOptions()
+    private static MappingOptions CreateDefaultOptions(IReadOnlyDictionary<string, string>? companyAliases = null)
     {
         return new MappingOptions
         {
@@ -131,7 +148,8 @@ public sealed class InventoryMapperTests
             DefaultManufacturerName = "Default Manufacturer",
             DefaultModelName = "Default Model",
             DefaultCategoryName = "Default Category",
-            DefaultStatusId = 2
+            DefaultStatusId = 2,
+            CompanyAliases = companyAliases ?? new Dictionary<string, string>()
         };
     }
 

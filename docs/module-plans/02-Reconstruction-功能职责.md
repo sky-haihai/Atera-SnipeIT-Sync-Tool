@@ -27,6 +27,7 @@ Reconstruction Module 负责把 Atera Pull Module 输出的原始 inventory 数�
 - default model name
 - default category name
 - default status id
+- company alias map, keyed by Atera/customer company name and valued by canonical Snipe-IT company name
 
 ## 3. 输出
 
@@ -63,6 +64,7 @@ public interface IInventoryMapper
 - 有 serial number 时优先使用 serial number 作为 primary identity
 - 缺少 serial number 时 fallback 到 `ATERA-{AgentID}`
 - 缺少 company 时使用 default company
+- company alias 命中时，把 Atera/customer company name 映射成 canonical Snipe-IT company name
 - 缺少 manufacturer 时使用 default manufacturer
 - 缺少 model 时使用 default model
 - category 使用 default category
@@ -119,6 +121,7 @@ Reconstruction Module 不负责：
 后续可以在不改变模块边界的前提下扩展：
 
 - company name override
+- company alias table
 - model name override
 - manufacturer normalization
 - category mapping table

@@ -12,6 +12,7 @@ public sealed class SnipeImportResult
     public required int SkippedAssets { get; init; }
     public required int FailedAssets { get; init; }
     public required int CreatedCompanies { get; init; }
+    public required int CreatedCategories { get; init; }
     public required int CreatedModels { get; init; }
     public required bool DryRun { get; init; }
     public required IReadOnlyList<ImportAction> Actions { get; init; }

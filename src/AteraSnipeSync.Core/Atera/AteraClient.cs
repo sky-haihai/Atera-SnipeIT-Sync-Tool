@@ -53,7 +53,8 @@ public sealed class AteraClient : IAteraClient
     /// </summary>
     public async Task<AteraPullResult> PullInventoryAsync(
         AteraPullRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress = null)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -64,6 +65,7 @@ public sealed class AteraClient : IAteraClient
         }
 
         _logger.LogInformation("Starting Atera inventory pull.");
+        ReportProgress(progress, "Starting Atera inventory pull.", current: 0, total: null);
 
         try
         {
@@ -75,10 +77,16 @@ public sealed class AteraClient : IAteraClient
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                ReportProgress(progress, $"Requesting Atera agents page {page}.", current: page - 1, total: null);
                 var envelope = await SendPageAsync(page, apiKey, cancellationToken).ConfigureAwait(false);
                 ConvertPageAgents(envelope.Items!, page, agents, warnings, _logger);
 
                 var totalPages = ResolveTotalPages(envelope, page);
+                ReportProgress(
+                    progress,
+                    $"Pulled Atera agents page {page}/{totalPages}; accepted {agents.Count} agent(s) so far.",
+                    page,
+                    totalPages);
                 if (page >= totalPages)
                 {
                     break;
@@ -99,6 +107,7 @@ public sealed class AteraClient : IAteraClient
             };
 
             _logger.LogInformation("Completed Atera inventory pull with {AgentCount} agent(s).", agents.Count);
+            ReportProgress(progress, $"Completed Atera inventory pull with {agents.Count} agent(s).", current: 1, total: 1);
             return result;
         }
         catch (AteraPullException exception)
@@ -109,6 +118,21 @@ public sealed class AteraClient : IAteraClient
                 exception.FailureKind);
             throw;
         }
+    }
+
+    private static void ReportProgress(
+        IProgress<SyncProgressUpdate>? progress,
+        string message,
+        int? current,
+        int? total)
+    {
+        progress?.Report(new SyncProgressUpdate
+        {
+            Stage = "AteraPull",
+            Message = message,
+            Current = current,
+            Total = total
+        });
     }
 
     private async Task<AteraAgentsEnvelope> SendPageAsync(

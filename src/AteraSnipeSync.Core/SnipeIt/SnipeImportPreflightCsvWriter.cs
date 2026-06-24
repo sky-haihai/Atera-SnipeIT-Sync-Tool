@@ -9,6 +9,7 @@ internal static class SnipeImportPreflightCsvWriter
 {
     public const string AssetsFileName = "snipeit-assets-plan.csv";
     public const string CompaniesFileName = "snipeit-companies-plan.csv";
+    public const string CategoriesFileName = "snipeit-categories-plan.csv";
     public const string ModelsFileName = "snipeit-models-plan.csv";
 
     /// <summary>
@@ -41,6 +42,12 @@ internal static class SnipeImportPreflightCsvWriter
             cancellationToken).ConfigureAwait(false);
 
         await File.WriteAllTextAsync(
+            Path.Combine(outputDirectory, CategoriesFileName),
+            BuildCategoriesCsv(plan.Categories),
+            Encoding.UTF8,
+            cancellationToken).ConfigureAwait(false);
+
+        await File.WriteAllTextAsync(
             Path.Combine(outputDirectory, ModelsFileName),
             BuildModelsCsv(plan.Models),
             Encoding.UTF8,
@@ -50,7 +57,7 @@ internal static class SnipeImportPreflightCsvWriter
     private static string BuildAssetsCsv(IReadOnlyList<SnipeAssetPreflightRow> rows)
     {
         var builder = new StringBuilder();
-        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag");
+        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag", "FailureCode", "FailureMessage");
 
         foreach (var row in rows)
         {
@@ -65,7 +72,9 @@ internal static class SnipeImportPreflightCsvWriter
                 row.CategoryName,
                 row.ManufacturerName,
                 row.ExistingAssetId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                row.ExistingAssetTag);
+                row.ExistingAssetTag,
+                row.FailureCode,
+                row.FailureMessage);
         }
 
         return builder.ToString();
@@ -84,6 +93,19 @@ internal static class SnipeImportPreflightCsvWriter
         return builder.ToString();
     }
 
+    private static string BuildCategoriesCsv(IReadOnlyList<SnipeCategoryPreflightRow> rows)
+    {
+        var builder = new StringBuilder();
+        AppendRow(builder, "Operation", "Name", "CategoryType");
+
+        foreach (var row in rows)
+        {
+            AppendRow(builder, row.Operation, row.Name, row.CategoryType);
+        }
+
+        return builder.ToString();
+    }
+
     private static string BuildModelsCsv(IReadOnlyList<SnipeModelPreflightRow> rows)
     {
         var builder = new StringBuilder();
@@ -96,7 +118,7 @@ internal static class SnipeImportPreflightCsvWriter
                 row.Operation,
                 row.Name,
                 row.CategoryName,
-                row.CategoryId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.CategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 row.ManufacturerName,
                 row.ManufacturerId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }

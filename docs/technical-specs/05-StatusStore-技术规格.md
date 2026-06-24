@@ -289,6 +289,9 @@ Rules:
 - `ModelsCreated = result.ImportResult?.CreatedModels ?? 0`
 - `ModelsUpdated = 0` unless future import result exposes structured model updates
 - `ModelsDeleted = 0`
+- `CategoriesCreated = result.ImportResult?.CreatedCategories ?? 0`
+- `CategoriesUpdated = 0` unless future import result exposes structured category updates
+- `CategoriesDeleted = 0`
 - `WarningCount = result.Warnings.Count`
 - `FailureCount = result.Failures.Count`
 
@@ -659,6 +662,9 @@ CompaniesDeleted = 0;
 ModelsCreated = result.ImportResult?.CreatedModels ?? 0;
 ModelsUpdated = 0;
 ModelsDeleted = 0;
+CategoriesCreated = result.ImportResult?.CreatedCategories ?? 0;
+CategoriesUpdated = 0;
+CategoriesDeleted = 0;
 WarningCount = result.Warnings.Count;
 FailureCount = result.Failures.Count;
 ```
@@ -704,7 +710,7 @@ Required tests:
 4. `SaveAsync_UsesUtcFinishedTimestampInFileName`
 5. `SaveAsync_DoesNotOverwrite_WhenFileNameConflicts`
 6. `SaveAsync_WritesStructuredAssetCreatedUpdatedSkippedFailedLists`
-7. `SaveAsync_WritesStructuredCompanyAndModelLists`
+7. `SaveAsync_WritesStructuredCompanyCategoryAndModelLists`
 8. `SaveAsync_WritesDeletedArraysAsEmpty_WhenNoDeleteActionsExist`
 9. `SaveAsync_DoesNotPersistSecretsOrRawPayloads`
 10. `ReadLatestAsync_ReturnsNull_WhenHistoryDirectoryMissing`

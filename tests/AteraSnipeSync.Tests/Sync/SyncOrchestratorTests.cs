@@ -38,6 +38,24 @@ public sealed class SyncOrchestratorTests
     }
 
     [Fact]
+    public async Task RunOnceAsync_ReportsStageProgress()
+    {
+        var calls = new List<string>();
+        var orchestrator = CreateOrchestrator(
+            new FakeAteraClient(calls),
+            new FakeInventoryMapper(calls),
+            new FakeSnipeImporter(calls),
+            out _);
+        var updates = new List<SyncProgressUpdate>();
+
+        await orchestrator.RunOnceAsync(CreateRequest(), CancellationToken.None, new CapturingProgress(updates));
+
+        Assert.Contains(updates, update => update.Stage == "Sync" && update.Message == "Starting sync run." && update.Percent == 0);
+        Assert.Contains(updates, update => update.Stage == "Sync" && update.Message.Contains("Mapping completed", StringComparison.Ordinal) && update.Percent == 45);
+        Assert.Contains(updates, update => update.Stage == "Sync" && update.Message == "Sync run completed." && update.Percent == 100);
+    }
+
+    [Fact]
     public async Task RunOnceAsync_AggregatesWarnings_FromAllStages()
     {
         var calls = new List<string>();
@@ -345,6 +363,7 @@ public sealed class SyncOrchestratorTests
             SkippedAssets = 0,
             FailedAssets = failedAssets,
             CreatedCompanies = 0,
+            CreatedCategories = 0,
             CreatedModels = 0,
             DryRun = true,
             Actions = [],
@@ -373,7 +392,8 @@ public sealed class SyncOrchestratorTests
 
         public Task<AteraPullResult> PullInventoryAsync(
             AteraPullRequest request,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<SyncProgressUpdate>? progress = null)
         {
             calls.Add("pull");
 
@@ -419,7 +439,8 @@ public sealed class SyncOrchestratorTests
         public Task<SnipeImportResult> ImportAsync(
             SnipeImportBatch batch,
             SnipeImportOptions options,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<SyncProgressUpdate>? progress = null)
         {
             calls.Add("import");
             LastOptions = options;
@@ -447,6 +468,14 @@ public sealed class SyncOrchestratorTests
         {
             _calls++;
             return _calls == 1 ? FirstTimestamp : SecondTimestamp;
+        }
+    }
+
+    private sealed class CapturingProgress(List<SyncProgressUpdate> updates) : IProgress<SyncProgressUpdate>
+    {
+        public void Report(SyncProgressUpdate value)
+        {
+            updates.Add(value);
         }
     }
 }

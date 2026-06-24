@@ -7,6 +7,7 @@ internal sealed class SnipeImportPreflightPlan
 {
     public required IReadOnlyList<SnipeAssetPreflightRow> Assets { get; init; }
     public required IReadOnlyList<SnipeCompanyPreflightRow> Companies { get; init; }
+    public required IReadOnlyList<SnipeCategoryPreflightRow> Categories { get; init; }
     public required IReadOnlyList<SnipeModelPreflightRow> Models { get; init; }
 }
 
@@ -23,7 +24,9 @@ internal sealed record SnipeAssetPreflightRow(
     string CategoryName,
     string ManufacturerName,
     int? ExistingAssetId,
-    string? ExistingAssetTag);
+    string? ExistingAssetTag,
+    string? FailureCode,
+    string? FailureMessage);
 
 /// <summary>
 /// Describes one planned company create row for the company preflight CSV.
@@ -33,12 +36,20 @@ internal sealed record SnipeCompanyPreflightRow(
     string Name);
 
 /// <summary>
+/// Describes one planned asset-category create row for the category preflight CSV.
+/// </summary>
+internal sealed record SnipeCategoryPreflightRow(
+    string Operation,
+    string Name,
+    string CategoryType);
+
+/// <summary>
 /// Describes one planned model create row for the model preflight CSV.
 /// </summary>
 internal sealed record SnipeModelPreflightRow(
     string Operation,
     string Name,
     string CategoryName,
-    int CategoryId,
+    int? CategoryId,
     string ManufacturerName,
     int? ManufacturerId);

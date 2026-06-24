@@ -82,7 +82,8 @@ public sealed class ContractCompilationTests
     {
         public Task<AteraPullResult> PullInventoryAsync(
             AteraPullRequest request,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<SyncProgressUpdate>? progress = null)
         {
             return Task.FromResult(new AteraPullResult
             {
@@ -121,7 +122,8 @@ public sealed class ContractCompilationTests
         public Task<SnipeImportResult> ImportAsync(
             SnipeImportBatch batch,
             SnipeImportOptions options,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            IProgress<SyncProgressUpdate>? progress = null)
         {
             return Task.FromResult(new SnipeImportResult
             {
@@ -130,6 +132,7 @@ public sealed class ContractCompilationTests
                 SkippedAssets = 0,
                 FailedAssets = 0,
                 CreatedCompanies = 0,
+                CreatedCategories = 0,
                 CreatedModels = 0,
                 DryRun = options.DryRun,
                 Actions = [],

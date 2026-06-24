@@ -11,6 +11,7 @@
 - serial number 优先作为 `AssetTag`
 - serial 缺失时 fallback 到 `ATERA-{AgentID}`
 - company / manufacturer / model 缺失时使用 `MappingOptions` 默认值
+- company alias 命中时把 Atera/customer company name 映射到 canonical Snipe-IT company name
 - 不可识别 agent 被跳过并输出 warning
 - summary count 正确
 - `source` / `options` 为 `null` 时抛出 `ArgumentNullException`
@@ -81,6 +82,7 @@ boundary test 也直接构造 representative `AteraPullResult`，验证它能映
 
 - `AgentInfo.AgentId` 或 `Name` 是 required property，测试 helper 必须赋值
 - warning code 必须与技术规格一致
+- company alias matching should trim names and ignore source casing
 - missing serial 但 agent id 存在时应生成 asset，不应跳过
 - serial 和 agent id 都缺失时应跳过 asset，并输出 `MissingAgentIdentity`
 - `SourceAgentCount` 统计输入 agent 总数，`MappedAssetCount` 只统计成功生成的 asset 数量

@@ -55,6 +55,11 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
     public Task<SyncRunResult> RunOnceAsync(
         SyncRunRequest request,
         CancellationToken cancellationToken);
+
+    public Task<SyncRunResult> RunOnceAsync(
+        SyncRunRequest request,
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress);
 }
 ```
 
@@ -68,6 +73,7 @@ Responsibilities:
 - aggregate warnings
 - convert stage exceptions to `SyncFailure`
 - convert `SnipeImportResult.Failures` to run-level `SyncFailure`
+- report safe, non-secret progress updates for manual UI callers
 - return `SyncRunResult`
 
 The constructor taking `TimeProvider` exists for deterministic unit tests.
@@ -79,10 +85,11 @@ The constructor taking `TimeProvider` exists for deterministic unit tests.
 ```csharp
 Task<AteraPullResult> PullInventoryAsync(
     AteraPullRequest request,
-    CancellationToken cancellationToken);
+    CancellationToken cancellationToken,
+    IProgress<SyncProgressUpdate>? progress = null);
 ```
 
-The orchestrator passes `request.Atera` and the same cancellation token.
+The orchestrator passes `request.Atera`, the same cancellation token, and any supplied progress callback.
 
 ### 4.2 `IInventoryMapper`
 
@@ -100,10 +107,11 @@ The orchestrator passes the successful pull result and `request.Mapping`.
 Task<SnipeImportResult> ImportAsync(
     SnipeImportBatch batch,
     SnipeImportOptions options,
-    CancellationToken cancellationToken);
+    CancellationToken cancellationToken,
+    IProgress<SyncProgressUpdate>? progress = null);
 ```
 
-The orchestrator passes the successful import batch, a Snipe options copy whose `DryRun` equals `request.Sync.DryRun`, and the same cancellation token.
+The orchestrator passes the successful import batch, a Snipe options copy whose `DryRun` equals `request.Sync.DryRun`, the same cancellation token, and any supplied progress callback.
 
 ## 5. Dry Run Option Copy
 
@@ -263,8 +271,9 @@ Required tests:
 6. `RunOnceAsync_ConvertsImportFailuresToRunFailures`
 7. `RunOnceAsync_AppliesSyncDryRunToSnipeOptions`
 8. `RunOnceAsync_RethrowsOperationCanceledException`
-9. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
-10. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
+9. `RunOnceAsync_ReportsStageProgress`
+10. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
+11. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
 
 Tests must use fake in-memory implementations of:
 

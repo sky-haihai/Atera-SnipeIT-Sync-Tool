@@ -14,11 +14,11 @@ internal static class MappingValueResolver
 
         if (companyName is not null)
         {
-            return companyName;
+            return ResolveCompanyAlias(companyName, options);
         }
 
         warnings.Add(MappingWarningFactory.MissingCompany(agent));
-        return options.DefaultCompanyName;
+        return ResolveCompanyAlias(options.DefaultCompanyName, options);
     }
 
     public static string ResolveManufacturerName(
@@ -58,5 +58,28 @@ internal static class MappingValueResolver
         MappingOptions options)
     {
         return options.DefaultCategoryName;
+    }
+
+    private static string ResolveCompanyAlias(string companyName, MappingOptions options)
+    {
+        var normalizedCompanyName = InventoryMapper.Normalize(companyName);
+        if (normalizedCompanyName is null)
+        {
+            return companyName;
+        }
+
+        foreach (var alias in options.CompanyAliases)
+        {
+            var aliasSource = InventoryMapper.Normalize(alias.Key);
+            var aliasTarget = InventoryMapper.Normalize(alias.Value);
+            if (aliasSource is not null
+                && aliasTarget is not null
+                && string.Equals(aliasSource, normalizedCompanyName, StringComparison.OrdinalIgnoreCase))
+            {
+                return aliasTarget;
+            }
+        }
+
+        return normalizedCompanyName;
     }
 }

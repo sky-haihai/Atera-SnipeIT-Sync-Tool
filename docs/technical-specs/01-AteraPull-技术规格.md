@@ -118,7 +118,8 @@ public interface IAteraClient
 {
     Task<AteraPullResult> PullInventoryAsync(
         AteraPullRequest request,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress = null);
 }
 ```
 
@@ -308,7 +309,8 @@ public sealed class AteraClient : IAteraClient
 
     public Task<AteraPullResult> PullInventoryAsync(
         AteraPullRequest request,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress = null);
 }
 ```
 
@@ -336,6 +338,7 @@ Constructor validation:
    - convert valid records to `AgentInfo`
    - convert non-fatal malformed records to warnings
    - determine next page from official pagination fields
+   - report safe page-level progress without exposing API keys or raw payloads
 6. If any page ultimately fails, throw `AteraPullException`
 7. Create `PullSummary`
 8. Return `AteraPullResult`
@@ -539,6 +542,7 @@ Required tests:
 11. `PullInventoryAsync_ThrowsPaginationStateUnknown_WhenNextPageCannotBeDetermined`
 12. `PullInventoryAsync_UsesClockForPulledAt`
 13. `PullInventoryAsync_DoesNotLogApiKey_WhenFailureOccurs`
+14. `PullInventoryAsync_ReportsProgress_WhenPagesComplete`
 
 Tests that assert JSON property names, pagination field names, status codes, or auth headers must use mocked HTTP only and must be based on the official Swagger findings recorded in this spec.
 

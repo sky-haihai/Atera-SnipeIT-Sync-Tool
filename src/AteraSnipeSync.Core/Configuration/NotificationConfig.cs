@@ -1,5 +1,8 @@
 namespace AteraSnipeSync.Core.Configuration;
 
+/// <summary>
+/// Configures whether notification events are enabled and which event names may be published.
+/// </summary>
 public sealed class NotificationConfig
 {
     public required bool Enabled { get; init; }

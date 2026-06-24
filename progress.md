@@ -1,43 +1,178 @@
 # Project Progress
 
-Last updated: 2026-06-19
+Last updated: 2026-06-23
 
 ## Latest Update
 
-Module 5 Status Store history documentation has been revised.
+Snipe-IT preview/sync now creates missing companies and asset categories before hardware writes, and manual runs now save local reports/logs.
 
-Documented behavior:
+Code changed:
 
-- `ISyncStatusStore.SaveAsync` writes every completed `SyncRunResult` as a separate history JSON file
-- history files are named `SyncResult_yyyyMMdd_HHmmss_fffffffZ.json` using UTC finished timestamps
-- history JSON uses structured sections for run metadata, summary, assets, companies, models, manufacturers, categories, warnings, and failures
-- assets/companies/models/etc. expose `created`, `updated`, `deleted`, `skipped`, and `failed` arrays for future TrayApp parsing
-- current no-delete policy keeps deleted arrays present but empty
-- `ISyncStatusStore.ReadLatestAsync` reconstructs latest status by scanning history files
-- malformed newest history files are skipped so an older valid file can still be shown
-- status JSON must not persist API keys, tokens, raw API payloads, or dense string blobs
+- Changed `SnipeImporter` so missing Snipe-IT asset categories are planned and created with `category_type = asset` instead of blocking assets when the operator-provided category, default `Computer`, is absent.
+- Split real Snipe-IT writes into a reference phase and an asset phase: companies are created first, then categories, then models, and only after all reference writes succeed are hardware assets created or updated.
+- Added `CreatedCategories` to `SnipeImportResult`, status history summaries, TrayApp summaries, and Snipe-IT preflight reporting.
+- Added `snipeit-categories-plan.csv` to manual preflight CSV output. Missing-category previews show `Add,<category>,asset`; model rows leave `CategoryId` empty until the real category create returns an id.
+- Defaulted the manual window's `Create Missing Companies` checkbox to checked for new local configurations while preserving saved operator choices.
+- Connected the no-service `ManualSyncForm` to `JsonFileSyncStatusStore` so completed preview/sync runs save `SyncResult_*.json` under `C:\ProgramData\AteraSnipeSync\History`.
+- Added date-split sanitized manual logs under `C:\ProgramData\AteraSnipeSync\Logs\ManualSync_yyyyMMdd.log`; each write recreates the daily file if it was deleted.
+- Added `LocalAppSettingsStore.GetDefaultLogDirectory()` for the shared ProgramData log folder.
+- Kept automated tests on mocked HTTP handlers only; no real Atera or Snipe-IT API call was added.
 
-Documented in:
+Tests changed:
 
-- `docs/module-plans/05-StatusStore-功能职责.md`
+- Replaced the old missing-category failure expectation with missing-category creation coverage.
+- Added a test proving company/category/model POSTs occur before the first hardware POST.
+- Added coverage for the new category preflight CSV and nullable category id in model preview rows.
+- Added status history coverage for category create summaries and category change lists.
+- Added local settings coverage for the default ProgramData log directory.
+
+Documentation changed:
+
+- `docs/module-plans/03-SnipeImport-功能职责.md`
+- `docs/module-plans/08-TrayApp-功能职责.md`
+- `docs/technical-specs/03-SnipeImport-技术规格.md`
 - `docs/technical-specs/05-StatusStore-技术规格.md`
+- `docs/technical-specs/08-TrayApp-技术规格.md`
+- `docs/test-guides/03-SnipeImport-单元测试指导手册.md`
 - `docs/test-guides/05-StatusStore-单元测试指导手册.md`
+- `docs/test-guides/08-TrayApp-单元测试指导手册.md`
+- `progress.md`
 
-Implementation status:
+Behavior notes:
 
-- Status Store production implementation is still pending.
-- Status Store unit tests are still pending.
-- The Status Store unit test guide intentionally remains a pending guide until code/tests exist.
+- Official Snipe-IT API documentation/OpenAPI was consulted before changing Snipe-IT company/category/model/hardware behavior.
+- Company creation remains controlled by `CreateMissingCompanies`; the manual UI now starts with that option checked for new configurations.
+- Category creation has no separate toggle in this pass. The module uses the operator-provided category name and creates it as an asset category when missing.
+- Manufacturer remains lookup-only; missing manufacturers still warn and allow model creation without `manufacturer_id`.
+- Manual preflight CSV remains separate from final status/report history. Preview writes CSV review files and also saves a dry-run `SyncResult_*.json` history record.
+- The no-service manual window now saves run reports directly. WorkerService production DI/scheduler wiring is still not implemented.
 
-Latest verification:
+Latest verification commands:
+
+```powershell
+dotnet build .\AteraSnipeSync.sln
+dotnet test .\AteraSnipeSync.sln --no-build
+git diff --check
+```
+
+Latest known result:
 
 ```text
-Not run. Documentation-only update.
+dotnet build succeeded with 0 warnings and 0 errors.
+dotnet test passed: 133 passed, 0 failed, 0 skipped.
+git diff --check succeeded; Git reported LF-to-CRLF conversion warnings only.
 ```
+
+Remaining module gaps / next steps:
+
+- WorkerService/DI still needs to register and call the completed pipeline pieces, including Status Store and the Notification pipeline.
+- Full TrayApp/WorkerService IPC remains future work; the current window is only a no-service manual validation entry.
+- TrayApp status viewer still needs to read and display `SyncStatusSnapshot`.
+- Real email, Teams, Slack, and webhook senders remain future extensions.
+- Manufacturer creation policy remains future work.
+
+## Previous Update
+
+TrayApp manual sync window now exposes an explicit `Load Config` button.
+
+Code changed:
+
+- Added `Load Config` to `ManualSyncForm` action buttons.
+- Clicking `Load Config` reloads reusable manual sync settings from the shared local settings store and applies them to the current form.
+- The button is disabled while a connection test, preview, or sync run is active.
+- Missing config is reported with a sanitized log message; loaded secrets are never printed.
+
+Documentation changed:
+
+- `docs/technical-specs/08-TrayApp-技术规格.md`
+- `docs/test-guides/08-TrayApp-单元测试指导手册.md`
+- `progress.md`
+
+Behavior notes:
+
+- Startup auto-load behavior remains unchanged; `Load Config` gives the operator a manual reload after copying or editing `appsettings.local.json`.
+- The button reads `C:\ProgramData\AteraSnipeSync\appsettings.local.json` through `LocalAppSettingsStore.GetDefaultFilePath()` in the default app path.
+- No Atera or Snipe-IT API integration code, DTOs, wire shapes, auth headers, or pagination behavior were changed.
+- No automated UI click test was added; existing local settings tests cover the underlying read/write behavior, and the test guide now documents the manual smoke check.
+
+Latest verification commands:
+
+```powershell
+dotnet build .\AteraSnipeSync.sln --no-restore /nr:false
+dotnet test .\AteraSnipeSync.sln --no-build /nr:false
+git diff --check
+```
+
+Latest known result:
+
+```text
+dotnet build succeeded with 0 warnings and 0 errors.
+dotnet test passed: 130 passed, 0 failed, 0 skipped.
+git diff --check succeeded; Git reported LF-to-CRLF conversion warnings only.
+```
+
+Remaining module gaps / next steps:
+
+- WorkerService/DI still needs to register and call the completed pipeline pieces, including Status Store and the Notification pipeline.
+- Full TrayApp/WorkerService IPC remains future work; the current window is only a no-service manual validation entry.
+- TrayApp Load Config should receive a manual UI smoke check in the packaged build on the target server.
+- TrayApp status viewer still needs to read and display `SyncStatusSnapshot`.
+- Real email, Teams, Slack, and webhook senders remain future extensions.
+
+## Earlier Update
+
+Snipe-IT preview planning now builds shared reference plans before matching assets.
+
+Code changed:
+
+- Changed `SnipeImporter` to validate records first, then plan unique company, category, manufacturer, and model references, then scan assets for MAC/serial/name matches.
+- Reference-plan failures now block affected assets before `GET /hardware` asset lookups and are still written to `snipeit-assets-plan.csv`.
+- Kept asset match lookups per asset, because MAC/serial/name matching is asset-specific.
+- Updated progress messages so preview shows reference planning stages and the later asset matching pass.
+- Updated `ImportAsync_WritesBlockedAssetRowsToPreflightCsv_WhenPlanningFails` to verify blocked reference-plan records do not query hardware.
+
+Documentation changed:
+
+- `docs/technical-specs/03-SnipeImport-技术规格.md`
+- `docs/test-guides/03-SnipeImport-单元测试指导手册.md`
+- `progress.md`
+
+Behavior notes:
+
+- There is still no intentional `Task.Delay` in the Snipe-IT preview path.
+- This does not invent a Snipe-IT batch endpoint or send 50 concurrent requests at once.
+- Repeated reference names now cost one Snipe-IT lookup per unique reference value before the asset pass starts.
+- Asset pass no longer contains company/category/manufacturer/model missing-reference decision logic; it applies the already-built reference plan.
+- Snipe-IT API endpoint paths, payloads, auth headers, and pagination semantics were not changed.
+
+Latest verification commands:
+
+```powershell
+dotnet build .\AteraSnipeSync.sln --no-restore /nr:false
+dotnet test .\AteraSnipeSync.sln --no-build /nr:false
+git diff --check
+```
+
+Latest known result:
+
+```text
+dotnet build succeeded with 0 warnings and 0 errors.
+dotnet test passed: 130 passed, 0 failed, 0 skipped.
+git diff --check succeeded; Git reported LF-to-CRLF conversion warnings only.
+```
+
+Remaining module gaps / next steps:
+
+- WorkerService/DI still needs to register and call the completed pipeline pieces, including Status Store and the Notification pipeline.
+- Full TrayApp/WorkerService IPC remains future work; the current window is only a no-service manual validation entry.
+- TrayApp status viewer still needs to read and display `SyncStatusSnapshot`.
+- Real email, Teams, Slack, and webhook senders remain future extensions.
 
 ## Current Focus
 
 The current workstream has advanced through Snipe-IT Import manual preflight CSV, Worker Scheduler scheduling support, manual sync request shaping, and Sync Orchestrator pipeline execution.
+
+Module 6 Notification now has the first-version safe stub implementation, tests, and test guide.
 
 Snipe-IT asset matching priority remains:
 
@@ -143,7 +278,7 @@ The Sync Orchestrator module plan/spec/test guide now define:
 
 ### Status Store
 
-The Status Store module plan/spec now define:
+The Status Store module plan/spec/test guide now define:
 
 - all-history local persistence through `ISyncStatusStore`
 - default history directory `C:\ProgramData\AteraSnipeSync\History`
@@ -155,7 +290,20 @@ The Status Store module plan/spec now define:
 - missing, empty, malformed, unsupported, and unreadable history behavior
 - temp-file atomic write requirements
 - no secrets, raw API payloads, full asset dumps, or dense string blobs in history JSON
-- required future `JsonFileSyncStatusStore` tests
+- required `JsonFileSyncStatusStore` tests and latest verification result
+
+### Notification
+
+The Notification module plan/spec/test guide now define and verify:
+
+- module boundary for notification request construction, event filtering, and publisher substitution
+- first-version no-external-send behavior through `NullNotificationPublisher`
+- stable event names for scheduled, manual, manual-preview, and generic sync notifications
+- severity mapping for information, warning, error, and critical notifications
+- `NotificationConfig.Enabled` and `NotificationConfig.OnEvents` filtering semantics
+- safe subject/message content rules that exclude secrets and raw payloads
+- implemented classes: `NotificationEventTypes`, `NotificationRequestFactory`, `NotificationEventFilter`, and `NullNotificationPublisher`
+- implemented unit tests and offline-only testing rules
 
 ### TrayApp
 
@@ -255,7 +403,9 @@ Updated contracts:
 
 Write behavior:
 
-- plans lookups first, then writes manual preflight CSV when enabled, then executes real writes
+- plans shared company/category/manufacturer/model references before asset matching
+- writes manual preflight CSV when enabled after planning and before real writes
+- blocks assets with missing reference plans before hardware matching
 - creates missing companies only when enabled and not dry-run
 - creates missing models only when enabled and not dry-run
 - does not create categories
@@ -317,16 +467,75 @@ Implemented:
 - rethrows cancellation
 - uses `TimeProvider` for deterministic timestamps in tests
 
+### Core Status Store
+
+Implemented:
+
+- `JsonFileSyncStatusStore`
+- `SyncStatusStoreOptions`
+- `SyncHistoryDocument`
+- `SyncHistoryRunInfo`
+- `SyncHistorySummary`
+- `SyncHistoryChangeSet`
+- `SyncHistoryItem`
+- `SyncHistoryWarning`
+- `SyncHistoryFailure`
+
+`JsonFileSyncStatusStore` now:
+
+- writes every completed `SyncRunResult` to a separate structured history JSON file
+- uses UTC `FinishedAt` timestamps in `SyncResult_yyyyMMdd_HHmmss_fffffffZ.json` file names
+- appends a short GUID suffix when a history file name already exists
+- writes through a temp file followed by a non-overwriting move
+- maps import actions and import failures into structured resource change sets
+- preserves empty `deleted` arrays under the current no-delete policy
+- skips malformed or unsupported files during latest-status reads
+- computes `LastSuccessAt` by scanning prior valid history files
+- avoids persisting Atera raw JSON, mapped asset dumps, API keys, or tokens
+
+### Core Notification
+
+Implemented:
+
+- `NotificationEventTypes`
+- `NotificationRequestFactory`
+- `NotificationEventFilter`
+- `NullNotificationPublisher`
+
+`NotificationRequestFactory` now:
+
+- maps scheduled, manual, manual-preview, and unknown triggers to stable event names
+- maps success, warning-only success, normal failure, and auth/credential failure to the required severities
+- builds concise subjects for each event type
+- builds safe summary messages with timestamps, counts, warning count, and first failure context
+- redacts unsafe first-failure message text that appears to contain secrets or raw payloads
+
+`NotificationEventFilter` now:
+
+- suppresses all events when notifications are disabled
+- suppresses all events when `OnEvents` is empty
+- matches configured events after trim with ordinal ignore-case comparison
+- ignores blank configured event names
+
+`NullNotificationPublisher` now:
+
+- validates required request fields
+- honors cancellation before logging
+- writes a debug log with event type, severity, and subject only
+- sends no HTTP, SMTP, Teams, Slack, webhook, Atera, or Snipe-IT traffic
+
 ### TrayApp Local Settings
 
 Implemented:
 
 - `LocalAppSettingsStore`
 - `SettingsForm`
+- `ManualSyncForm`
 - local JSON config preservation when saving Atera API key
 - schedule config save/load under `Sync.Schedule`
 - default manual preflight directory helper
-- replacement of default `Form1` with `SettingsForm`
+- replacement of default `Form1` with a temporary no-service manual sync validation window
+- direct manual validation path for `Preview Changes` and `Sync Now` through the existing Core orchestrator
 
 ### Interface Organization
 
@@ -364,6 +573,8 @@ Automated tests now cover:
 - manual preflight CSV files are written before Snipe-IT mutations
 - manual preflight CSV write failure blocks Snipe-IT mutations
 - dry-run plus manual preflight writes CSV but suppresses mutations
+- Snipe-IT reference-plan-blocked assets are written to CSV and do not query hardware
+- repeated Snipe-IT reference names are planned once per unique reference before asset matching
 - scheduler daily/weekly/monthly next-run calculation
 - monthly 31st skips months without that date
 - scheduler request factory disables manual preflight CSV
@@ -375,6 +586,17 @@ Automated tests now cover:
 - sync orchestrator dry-run option propagation
 - sync orchestrator cancellation rethrow behavior
 - manual sync request factory separates `Sync Now` from `Preview Changes`
+- status store per-run history JSON persistence
+- status store UTC file naming and conflict-safe file creation
+- status store structured resource change sets
+- status store malformed history skipping and latest snapshot reconstruction
+- status store latest success timestamp scanning
+- status store cancellation and constructor validation behavior
+- notification request event mapping and subject/severity construction
+- notification safe summary counts and first-failure context
+- notification secret/raw-payload exclusion from generated messages
+- notification event filtering for disabled, empty, unmatched, and case-insensitive configured events
+- null notification publisher validation and cancellation behavior
 - TrayApp/local settings read/write behavior
 - schedule config save/load and invalid schedule rejection
 - default manual preflight directory shape
@@ -383,17 +605,16 @@ Automated tests now cover:
 
 Still pending:
 
-- Status Store implementation
 - WorkerService wiring for `AteraClient`, `InventoryMapper`, `SnipeImporter`, `SyncOrchestrator`, and `SyncScheduler`
 - production DI registration
-- real manual validation runner/tooling
 - encrypted secret storage
 - TrayApp Snipe-IT configuration UI
 - TrayApp schedule editor UI implementation
-- TrayApp manual sync preflight confirmation UI implementation
+- formal TrayApp/WorkerService IPC for manual sync
+- production TrayApp manual sync preflight confirmation UI implementation
 - TrayApp status viewer
-- Notification implementation
 - installer/service deployment scripts
+- concrete email, Teams, Slack, and webhook notification senders
 - category/manufacturer creation policy
 - automatic discovery of Snipe-IT MAC custom field db column
 
@@ -402,14 +623,15 @@ Still pending:
 Last successful commands:
 
 ```powershell
-dotnet build
-dotnet test
+dotnet build .\AteraSnipeSync.sln --no-restore /nr:false
+dotnet test .\AteraSnipeSync.sln --no-build /nr:false
+git diff --check
 ```
 
 Last known test result:
 
 ```text
-Passed: 72
+Passed: 130
 Failed: 0
 Skipped: 0
 ```
@@ -428,23 +650,28 @@ Notable current implementation files:
 - `src/AteraSnipeSync.Core/Scheduling/SyncScheduler.cs`
 - `src/AteraSnipeSync.Core/Sync/SyncOrchestrator.cs`
 - `src/AteraSnipeSync.Core/Sync/ManualSyncRequestFactory.cs`
+- `src/AteraSnipeSync.Core/Status/JsonFileSyncStatusStore.cs`
+- `src/AteraSnipeSync.Core/Status/SyncStatusStoreOptions.cs`
+- `src/AteraSnipeSync.Core/Notifications/NotificationRequestFactory.cs`
+- `src/AteraSnipeSync.Core/Notifications/NotificationEventFilter.cs`
+- `src/AteraSnipeSync.Core/Notifications/NullNotificationPublisher.cs`
 - `src/AteraSnipeSync.Core/Configuration/LocalAppSettingsStore.cs`
+- `src/AteraSnipeSync.TrayApp/ManualSyncForm.cs`
+- `src/AteraSnipeSync.TrayApp/Program.cs`
 - `tests/AteraSnipeSync.Tests/SnipeIt/SnipeImporterTests.cs`
 - `tests/AteraSnipeSync.Tests/Scheduling/ScheduleCalculatorTests.cs`
 - `tests/AteraSnipeSync.Tests/Scheduling/ScheduledSyncRequestFactoryTests.cs`
 - `tests/AteraSnipeSync.Tests/Scheduling/SyncSchedulerTests.cs`
 - `tests/AteraSnipeSync.Tests/Sync/SyncOrchestratorTests.cs`
 - `tests/AteraSnipeSync.Tests/Sync/ManualSyncRequestFactoryTests.cs`
+- `tests/AteraSnipeSync.Tests/Status/JsonFileSyncStatusStoreTests.cs`
+- `tests/AteraSnipeSync.Tests/Notifications/NotificationRequestFactoryTests.cs`
+- `tests/AteraSnipeSync.Tests/Notifications/NotificationEventFilterTests.cs`
+- `tests/AteraSnipeSync.Tests/Notifications/NullNotificationPublisherTests.cs`
 - `tests/AteraSnipeSync.Tests/Configuration/LocalAppSettingsStoreTests.cs`
 
 `AGENTS.md` now includes the progress documentation requirement: every code/test change must update `progress.md` in the same work session.
 
 ## Recommended Next Step
 
-Continue with Status Store and WorkerService/DI wiring:
-
-```text
-Atera Pull -> Reconstruction -> Snipe-IT Import -> Status/Report/Notification
-```
-
-WorkerService should call `SyncOrchestrator` through DI, then save the resulting `SyncRunResult` through Status Store once that module is implemented.
+Wire WorkerService/DI so the runtime calls `SyncOrchestrator`, saves the resulting `SyncRunResult` through `JsonFileSyncStatusStore`, and publishes filtered notification requests through the completed notification module.

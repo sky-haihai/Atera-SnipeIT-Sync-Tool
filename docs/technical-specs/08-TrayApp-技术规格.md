@@ -10,6 +10,7 @@ Production code:
 
 - `src/AteraSnipeSync.TrayApp/SettingsForm.cs`
 - `src/AteraSnipeSync.TrayApp/SettingsForm.Designer.cs`
+- `src/AteraSnipeSync.TrayApp/ManualSyncForm.cs`
 - `src/AteraSnipeSync.TrayApp/Program.cs`
 - `src/AteraSnipeSync.Core/Configuration/LocalAppSettingsStore.cs`
 
@@ -41,6 +42,34 @@ public sealed class LocalAppSettingsStore
     public Task SaveAteraApiKeyAsync(
         string apiKey,
         CancellationToken cancellationToken);
+
+    public Task<ManualSyncSettings?> LoadManualSyncSettingsAsync(CancellationToken cancellationToken);
+
+    public Task SaveManualSyncSettingsAsync(
+        ManualSyncSettings settings,
+        CancellationToken cancellationToken);
+}
+```
+
+Manual sync settings model:
+
+```csharp
+public sealed class ManualSyncSettings
+{
+    public string? AteraBaseUrl { get; init; }
+    public string? AteraApiKey { get; init; }
+    public string? SnipeItBaseUrl { get; init; }
+    public string? SnipeItApiToken { get; init; }
+    public string? DefaultCompanyName { get; init; }
+    public string? DefaultManufacturerName { get; init; }
+    public string? DefaultModelName { get; init; }
+    public string? DefaultCategoryName { get; init; }
+    public int? DefaultStatusId { get; init; }
+    public IReadOnlyDictionary<string, string> CompanyAliases { get; init; }
+    public string? MacAddressCustomFieldDbColumnName { get; init; }
+    public double? NameMatchThreshold { get; init; }
+    public bool? CreateMissingCompanies { get; init; }
+    public bool? CreateMissingModels { get; init; }
 }
 ```
 
@@ -49,6 +78,8 @@ Responsibilities:
 - Resolve default path to `C:\ProgramData\AteraSnipeSync\appsettings.local.json`
 - Load `Atera.ApiKey` from JSON
 - Save trimmed `Atera.ApiKey`
+- Load and save reusable manual sync panel settings under `Atera`, `SnipeIt`, and `Mapping`
+- Preserve manual sync secrets locally without printing or logging them
 - Create parent directory if missing
 - Preserve existing unrelated JSON sections
 - Reject blank API key with `ArgumentException`
@@ -103,7 +134,7 @@ Behavior:
 
 ## 5. Program
 
-`Program.Main` runs `SettingsForm`.
+`Program.Main` currently runs `ManualSyncForm` as a temporary no-service manual validation entry. `SettingsForm` remains available as the original local Atera key settings surface.
 
 ## 6. Tests
 
@@ -114,6 +145,11 @@ Required tests:
 - `SaveAteraApiKeyAsync_PreservesExistingSections`
 - `SaveAteraApiKeyAsync_ThrowsArgumentException_WhenApiKeyBlank`
 - `LoadAteraApiKeyAsync_ThrowsInvalidOperationException_WhenJsonMalformed`
+- `LoadManualSyncSettingsAsync_ReturnsNull_WhenFileDoesNotExist`
+- `SaveManualSyncSettingsAsync_SavesManualPanelConfig`
+- `LoadManualSyncSettingsAsync_ReturnsSavedManualPanelConfig`
+- `SaveManualSyncSettingsAsync_PreservesExistingSections`
+- `SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenSnipeTokenBlank`
 
 Tests must use temporary files only and must not read or write `C:\ProgramData`.
 
@@ -221,6 +257,7 @@ Flow:
 4. Snipe Import writes temporary CSV files:
    - `snipeit-assets-plan.csv`
    - `snipeit-companies-plan.csv`
+   - `snipeit-categories-plan.csv`
    - `snipeit-models-plan.csv`
 5. TrayApp shows the temporary CSV folder and provides open buttons
 6. User confirms or cancels
@@ -267,3 +304,85 @@ Behavior:
 - `CreatePreviewChangesRequest` sets `SnipeIt.ManualPreflightCsvEnabled = true`
 - `CreatePreviewChangesRequest` sets `SnipeIt.ManualPreflightCsvDirectory = preflightDirectory`
 - `CreatePreviewChangesRequest` rejects blank `preflightDirectory`
+
+### 8.4 Temporary No-Service Manual Test Window
+
+Until WorkerService/IPC wiring is implemented, `Program.Main` may run a local
+manual validation window directly:
+
+```csharp
+public sealed class ManualSyncForm : Form
+```
+
+Production file:
+
+```text
+src/AteraSnipeSync.TrayApp/ManualSyncForm.cs
+```
+
+Responsibilities:
+
+- collect Atera API base URL and API key from password-protected local UI fields
+- collect Snipe-IT API base URL and API token from local UI fields
+- collect mapping defaults needed to build `MappingOptions`
+- collect optional company aliases, one per line, using `Atera company => Snipe-IT company`
+- default `Create Missing Companies` to checked for new local configurations
+- expose `Load Config` to reload reusable manual panel settings from `appsettings.local.json` into the current UI without logging secrets
+- expose `Save Config` to persist reusable manual panel settings in `appsettings.local.json`
+- load saved manual panel settings when the form opens
+- create a base `SyncRunRequest` without changing Atera or Snipe-IT wire shapes
+- call `ManualSyncRequestFactory.CreatePreviewChangesRequest` for `Preview Changes`
+- call `ManualSyncRequestFactory.CreateSyncNowRequest` for `Sync Now`
+- expose `Test Atera` to validate Atera credentials through the existing `AteraClient.PullInventoryAsync` path
+- expose `Test Snipe-IT` to validate Snipe-IT connectivity through documented `GET /hardware?limit=1`
+- show a determinate progress bar for manual preview, sync, and connection tests
+- show the latest stage/detail text from safe `SyncProgressUpdate` callbacks
+- append progress detail messages to the sanitized log so long previews show current work
+- append sanitized manual run log lines to `C:\ProgramData\AteraSnipeSync\Logs\ManualSync_yyyyMMdd.log`, creating the date-specific file when missing
+- construct `AteraClient`, `InventoryMapper`, `SnipeImporter`, and `SyncOrchestrator` directly in the UI process
+- save completed preview/sync `SyncRunResult` reports through `JsonFileSyncStatusStore` under `C:\ProgramData\AteraSnipeSync\History`
+- log the saved `SyncResult_*.json` path when report/status history is written
+- require a confirmation dialog before `Sync Now`
+- never print or log API keys or tokens
+- show only sanitized run summaries, warnings, failures, and preflight CSV folder paths
+
+Limitations:
+
+- this is an operator-run manual validation tool only
+- automated tests must not click the UI or call real APIs
+- `Test Atera` is read-only but may pull inventory pages because it reuses the existing verified Atera client path
+- `Test Snipe-IT` is read-only and must not create, update, or delete Snipe-IT records
+- Snipe-IT tokens are persisted only in the local machine `appsettings.local.json` when the operator clicks `Save Config`
+- WorkerService/IPC status persistence remains future work; the temporary local manual window writes status/history directly after each completed run
+- full TrayApp tray menu, IPC, status viewer, and preview-confirm UX remain future work
+
+### 8.5 Manual Sync Local Config Shape
+
+`Save Config` writes reusable panel settings while preserving unrelated sections:
+
+```json
+{
+  "Atera": {
+    "BaseUrl": "https://app.atera.com/api/v3",
+    "ApiKey": "<local api key>"
+  },
+  "SnipeIt": {
+    "BaseUrl": "https://snipe.example.com/api/v1",
+    "ApiToken": "<local api token>",
+    "DefaultStatusId": 2,
+    "MacAddressCustomFieldDbColumnName": "_snipeit_mac_address_1",
+    "NameMatchThreshold": 0.92,
+    "CreateMissingCompanies": false,
+    "CreateMissingModels": false
+  },
+  "Mapping": {
+    "DefaultCompanyName": "Unknown Company",
+    "DefaultManufacturerName": "Unknown Manufacturer",
+    "DefaultModelName": "Unknown Model",
+    "DefaultCategoryName": "Computer",
+    "CompanyAliases": {
+      "Atera company name": "Snipe-IT company name"
+    }
+  }
+}
+```

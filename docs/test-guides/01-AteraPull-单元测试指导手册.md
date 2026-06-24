@@ -16,6 +16,7 @@
 - `AteraClient` 使用 `page` / `itemsInPage` 分页参数和 `items` / `totalPages` response envelope
 - `AgentInfo` 尽可能保留官方 `AgentQueryDTO` 字段，并保留 `RawJson`
 - `AteraClient` 支持多页、retryable failure、authentication failure、malformed envelope 和 pagination unknown 行为
+- `AteraClient` reports safe page-level progress when a progress callback is supplied
 - 现有 Reconstruction tests 可以继续消费 agent-only `AteraPullResult`
 
 仍不测试真实 Atera tenant。以下行为只通过 mocked HTTP 和官方 Swagger shape 测试：

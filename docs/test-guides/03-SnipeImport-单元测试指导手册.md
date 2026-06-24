@@ -7,12 +7,13 @@ Snipe Import Module 的测试验证：
 - `SnipeImporter` 按 MAC address、serial number、asset name 高相似度顺序匹配 asset
 - missing company 可以按配置创建
 - missing model 可以按配置创建
-- category missing 会使单条 asset failed
+- missing category 会创建 `category_type = asset` 的 Snipe-IT asset category
 - ambiguous MAC/name match 不会自动更新
 - dry-run 不执行任何 POST/PATCH 写入
 - HTTP 200 但 JSON body `status = error` 会被识别为 failure
 - create/update asset payload 的 notes 会包含 `Auto Synced from Atera at {UTC timestamp}`
 - `InventoryMapper` 会把 Atera `AgentInfo.MacAddresses` 传递到 `SnipeAssetImportRecord.MacAddresses`
+- repeated company/category/manufacturer/model references are planned once before asset matching
 
 所有自动化测试都使用 mocked `HttpMessageHandler`。不得在 `dotnet test` 中调用真实 Snipe-IT API。
 
@@ -90,9 +91,15 @@ dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "F
 
 - verifies `POST /models` is called when model lookup returns no rows and creation is enabled
 
-`ImportAsync_FailsRecord_WhenCategoryMissing`
+`ImportAsync_CreatesMissingCategory_WhenCategoryMissing`
 
-- verifies missing category fails the asset because model creation requires a category id
+- verifies `POST /categories` is called with `category_type = asset` when category lookup returns no rows
+- verifies the model and asset can be created after the category is created
+
+`ImportAsync_CreatesAllMissingReferencesBeforeHardwareWrites`
+
+- verifies missing company, category, and model are created before the first `POST /hardware`
+- verifies the real run stops interleaving reference creation with asset creation
 
 `ImportAsync_FailsRecord_WhenMacMatchIsAmbiguous`
 
@@ -110,7 +117,7 @@ dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "F
 
 `ImportAsync_WritesManualPreflightCsvBeforeAnyPostOrPatch_WhenEnabled`
 
-- verifies manual sync preflight writes `snipeit-assets-plan.csv`, `snipeit-companies-plan.csv`, and `snipeit-models-plan.csv`
+- verifies manual sync preflight writes `snipeit-assets-plan.csv`, `snipeit-companies-plan.csv`, `snipeit-categories-plan.csv`, and `snipeit-models-plan.csv`
 - verifies each writable object table includes an `Operation` column
 - verifies the CSV files exist before the first real `POST` or `PATCH`
 
@@ -123,6 +130,29 @@ dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "F
 
 - verifies dry-run plus manual preflight still writes the review CSV files
 - verifies dry-run plus manual preflight does not send Snipe-IT mutations
+
+`ImportAsync_WritesMissingCategoryPreflightCsv_WhenCategoryWillBeCreated`
+
+- verifies missing category preview writes `snipeit-categories-plan.csv`
+- verifies the category row uses `Operation = Add` and `CategoryType = asset`
+- verifies model preview leaves `CategoryId` empty when the category id is not known until real `POST /categories`
+
+`ImportAsync_WritesBlockedAssetRowsToPreflightCsv_WhenPlanningFails`
+
+- verifies manual preflight writes blocked asset rows when lookup/planning fails before a normal add/modify plan can be produced
+- verifies the blocked asset row includes `FailureCode` and `FailureMessage`
+- verifies reference-plan-blocked assets do not query `GET /hardware`
+- verifies no Snipe-IT `POST` or `PATCH` is sent for blocked preview rows
+
+`ImportAsync_ReportsProgressDuringPlanning`
+
+- verifies optional progress callbacks report reference planning and asset matching details
+- verifies progress messages include dependency planning stages without exposing secrets or raw payloads
+
+`ImportAsync_ReusesReferenceLookups_ForRepeatedReferenceNames`
+
+- verifies repeated reference names are planned once per unique company/category/manufacturer/model reference
+- verifies repeated asset planning still performs asset match lookups for each asset
 
 ## 6. Mocking Strategy
 
@@ -146,10 +176,13 @@ When adding tests, queue responses in the same order `SnipeImporter` calls Snipe
 7. `GET /hardware` for name search
 8. manual preflight CSV write, when enabled
 9. optional `POST /companies`
-10. optional `POST /models`
-11. `PATCH /hardware/{id}` or `POST /hardware`
+10. optional `POST /categories`
+11. optional `POST /models`
+12. `PATCH /hardware/{id}` or `POST /hardware`
 
 The exact sequence changes when an earlier match succeeds. For example, a MAC match skips serial and name search.
+
+Reference planning runs before asset matching. If company, category, manufacturer, or model planning blocks a record, do not queue hardware lookup responses for that blocked record.
 
 ## 7. Manual Real-Key Verification Policy
 
@@ -173,7 +206,8 @@ Expected safe output should include only sanitized counts and target names, neve
 
 - Stub response queue order does not match importer request order
 - Test expects serial lookup even though MAC already matched
-- Missing category fixture causes model ensure to fail early
+- Missing category fixture now requires category/model/asset create responses unless the test is dry-run
 - Dry-run test accidentally queues or expects POST/PATCH
+- Planning failure preview expects an empty assets CSV; blocked rows should be present instead
 - JSON response lacks `id` or `payload.id` after create
 - Snipe-IT business error body uses `status = error`, so the importer correctly marks the record failed

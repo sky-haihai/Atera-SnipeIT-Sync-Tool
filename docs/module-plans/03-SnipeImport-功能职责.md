@@ -79,6 +79,7 @@ Snipe Import Module 负责把 Reconstruction Module 输出的 `SnipeImportBatch`
 - skipped asset count
 - failed asset count
 - created company count
+- created category count
 - created model count
 - dry-run flag
 - structured actions
@@ -104,13 +105,15 @@ Manual sync `Preview Changes` preflight CSV 下：
 - `Sync Now` 是手动真实同步按钮，直接进入真实 sync pipeline，不生成 preflight CSV
 - 临时 CSV 用于人工审核，必须和最终 sync result/report 分开保存
 - CSV 必须按对象类型分表，不能把 asset、company、model 混在同一个表
-- 每个 CSV 必须包含一列 `Operation`，用于说明本行是 `Add`、`Modify` 还是 `Delete`
+- 每个 CSV 必须包含一列 `Operation`，用于说明本行是 `Add`、`Modify`、`Blocked` 还是未来保留的 `Delete`
 - 第一版当前会产生的 CSV 表：
   - `snipeit-assets-plan.csv`
   - `snipeit-companies-plan.csv`
+  - `snipeit-categories-plan.csv`
   - `snipeit-models-plan.csv`
 - 第一版没有 delete 行为，因此 `Operation = Delete` 只是保留值，不应在当前实现中出现
-- 第一版不创建或修改 category/manufacturer，因此不需要 category/manufacturer 修改表；如果未来加入 category/manufacturer 创建或修改行为，必须分别新增独立 CSV 表
+- 第一版会自动创建缺失的 asset category，`category_type` 固定为 `asset`，并写入独立的 category CSV；manufacturer 仍只查询不创建
+- 如果某个 asset 因 company/category/model/ambiguous match 等 planning failure 无法继续，`snipeit-assets-plan.csv` 仍必须写入该 asset 的 `Blocked` 行和 failure reason，避免人工预览时看到空表
 - 如果 `Preview Changes` CSV 无法写入，该预览流程必须失败，且不得执行任何真实 Snipe-IT 写入
 - 后台 scheduler 自动 sync 不要求生成这些临时 CSV；它应依赖配置、日志、status/report 和 notification
 
@@ -131,7 +134,7 @@ public interface ISnipeImporter
 一次 import run 成功处理每条 asset record 时，应满足：
 
 - 能查询或创建 missing company，除非 options 禁止创建
-- 能查询 category；第一版不自动创建 category
+- 能查询或创建 missing asset category，`category_type` 固定为 `asset`
 - 能查询 manufacturer；查不到 manufacturer 时不阻塞导入，但 model 会不绑定 manufacturer
 - 能查询或创建 missing model，除非 options 禁止创建
 - 能按 MAC address 优先比较 existing asset
@@ -140,7 +143,7 @@ public interface ISnipeImporter
 - 唯一可靠命中时更新 existing asset
 - 没有可靠命中时创建 new hardware asset
 - 每次自动创建或更新 asset 时，在 Snipe-IT notes 中写入 `Auto Synced from Atera at {UTC timestamp}`
-- `Preview Changes` preflight 开启时，能在不执行真实写入的情况下输出 company/model/asset 临时 CSV 修改计划
+- `Preview Changes` preflight 开启时，能在不执行真实写入的情况下输出 company/category/model/asset 临时 CSV 修改计划
 - 能识别 HTTP 200 但 JSON body `status = error` 的 Snipe-IT 业务失败
 - 能返回 structured actions/failures/warnings
 
@@ -150,7 +153,7 @@ public interface ISnipeImporter
 
 - options 缺少 base URL 或 API token
 - company 缺失且不允许创建
-- category 查不到，因为 model 创建需要 category id
+- company/category/model reference 创建失败，导致 asset 写入必须停止
 - model 缺失且不允许创建
 - MAC address 命中多个不同 asset
 - serial number response 表示 error 或 ambiguous state
@@ -174,7 +177,7 @@ public interface ISnipeImporter
 - 创建 category
 - 创建 manufacturer
 - 自动发现 MAC custom field db column
-- 为只读查询对象生成修改 CSV 表；例如第一版 category/manufacturer 只查询，不生成 category/manufacturer 修改表
+- 为只读查询对象生成修改 CSV 表；例如第一版 manufacturer 只查询，不生成 manufacturer 修改表
 
 ## 9. 扩展点
 
@@ -183,8 +186,8 @@ public interface ISnipeImporter
 - 自动发现或配置多个 MAC custom field
 - 更复杂的名称相似度算法
 - 人工确认队列
-- category/manufacturer 自动创建选项
-- category/manufacturer preflight CSV table support if those objects become writable
+- manufacturer 自动创建选项
+- manufacturer preflight CSV table support if it becomes writable
 - checkout/checkin 行为
 - disappeared devices archive policy
 - company/model/category/manufacturer cache

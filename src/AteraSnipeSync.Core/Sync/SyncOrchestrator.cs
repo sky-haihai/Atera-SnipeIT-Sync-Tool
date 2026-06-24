@@ -57,6 +57,17 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         SyncRunRequest request,
         CancellationToken cancellationToken)
     {
+        return await RunOnceAsync(request, cancellationToken, progress: null).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the sync pipeline once and reports safe stage progress for manual UI callers.
+    /// </summary>
+    public async Task<SyncRunResult> RunOnceAsync(
+        SyncRunRequest request,
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress)
+    {
         ArgumentNullException.ThrowIfNull(request);
 
         var startedAt = _timeProvider.GetUtcNow();
@@ -70,13 +81,16 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             "Starting sync run triggered by {TriggeredBy}. DryRun: {DryRun}.",
             request.Sync.TriggeredBy,
             request.Sync.DryRun);
+        ReportProgress(progress, "Starting sync run.", percent: 0);
 
         try
         {
+            ReportProgress(progress, "Pulling Atera inventory.", percent: 5);
             pullResult = await _ateraClient
-                .PullInventoryAsync(request.Atera, cancellationToken)
+                .PullInventoryAsync(request.Atera, cancellationToken, progress)
                 .ConfigureAwait(false);
             warnings.AddRange(pullResult.Warnings);
+            ReportProgress(progress, $"Atera pull completed with {pullResult.Summary.AgentCount} agent(s).", percent: 35);
         }
         catch (OperationCanceledException)
         {
@@ -86,13 +100,16 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         {
             failures.Add(ToStageFailure(AteraPullStage, exception));
             LogStageFailure(AteraPullStage, exception);
+            ReportProgress(progress, $"Atera pull failed: {exception.Message}", percent: 100);
             return CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
         }
 
         try
         {
+            ReportProgress(progress, "Mapping Atera agents into Snipe-IT asset records.", percent: 40);
             importBatch = _inventoryMapper.Map(pullResult, request.Mapping);
             warnings.AddRange(importBatch.Warnings);
+            ReportProgress(progress, $"Mapping completed with {importBatch.Summary.MappedAssetCount} asset(s).", percent: 45);
         }
         catch (OperationCanceledException)
         {
@@ -102,18 +119,21 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         {
             failures.Add(ToStageFailure(ReconstructionStage, exception));
             LogStageFailure(ReconstructionStage, exception);
+            ReportProgress(progress, $"Mapping failed: {exception.Message}", percent: 100);
             return CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
         }
 
         try
         {
             var snipeOptions = ApplySyncOptions(request.SnipeIt, request.Sync);
+            ReportProgress(progress, "Planning Snipe-IT import.", percent: 50);
             importResult = await _snipeImporter
-                .ImportAsync(importBatch, snipeOptions, cancellationToken)
+                .ImportAsync(importBatch, snipeOptions, cancellationToken, progress)
                 .ConfigureAwait(false);
 
             warnings.AddRange(importResult.Warnings);
             failures.AddRange(importResult.Failures.Select(ToRunFailure));
+            ReportProgress(progress, "Snipe-IT import stage completed.", percent: 95);
         }
         catch (OperationCanceledException)
         {
@@ -123,9 +143,25 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         {
             failures.Add(ToStageFailure(SnipeImportStage, exception));
             LogStageFailure(SnipeImportStage, exception);
+            ReportProgress(progress, $"Snipe-IT import failed: {exception.Message}", percent: 100);
         }
 
-        return CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
+        var finalResult = CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
+        ReportProgress(progress, finalResult.Success ? "Sync run completed." : "Sync run completed with failures.", percent: 100);
+        return finalResult;
+    }
+
+    private static void ReportProgress(
+        IProgress<SyncProgressUpdate>? progress,
+        string message,
+        int percent)
+    {
+        progress?.Report(new SyncProgressUpdate
+        {
+            Stage = "Sync",
+            Message = message,
+            Percent = Math.Clamp(percent, 0, 100)
+        });
     }
 
     private SyncRunResult CreateResult(

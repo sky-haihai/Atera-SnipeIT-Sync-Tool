@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using AteraSnipeSync.Core.Common;
 using AteraSnipeSync.Core.SnipeIt;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -121,6 +122,31 @@ public sealed class SnipeImporterTests
     }
 
     [Fact]
+    public async Task ImportAsync_ReportsProgressDuringPlanning()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(20, "Laptop")));
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        var importer = CreateImporter(handler);
+        var updates = new List<SyncProgressUpdate>();
+
+        await importer.ImportAsync(
+            CreateBatch(CreateRecord(serial: "SN-001", macAddresses: ["00-11-22-33-44-55"])),
+            CreateOptions(dryRun: true),
+            CancellationToken.None,
+            new CapturingProgress(updates));
+
+        Assert.Contains(updates, update => update.Stage == "SnipeImport" && update.Message.Contains("Planning Snipe-IT company references", StringComparison.Ordinal));
+        Assert.Contains(updates, update => update.Stage == "SnipeImport" && update.Message.Contains("Matching Snipe-IT asset", StringComparison.Ordinal));
+        Assert.Contains(updates, update => update.Stage == "SnipeImport" && update.Message.Contains("Completed Snipe-IT dry-run planning", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ImportAsync_CreatesMissingCompany_WhenAllowed()
     {
         var handler = new StubHttpMessageHandler();
@@ -171,11 +197,18 @@ public sealed class SnipeImporterTests
     }
 
     [Fact]
-    public async Task ImportAsync_FailsRecord_WhenCategoryMissing()
+    public async Task ImportAsync_CreatesMissingCategory_WhenCategoryMissing()
     {
         var handler = new StubHttpMessageHandler();
         handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(10, "Acme")));
         handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(30, "Dell")));
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(20));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(40));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(703));
         var importer = CreateImporter(handler);
 
         var result = await importer.ImportAsync(
@@ -183,9 +216,47 @@ public sealed class SnipeImporterTests
             CreateOptions(),
             CancellationToken.None);
 
-        Assert.Equal(1, result.FailedAssets);
-        Assert.Contains(result.Failures, failure => failure.Code == "SnipeImport.CategoryMissing");
-        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
+        Assert.Equal(1, result.CreatedCategories);
+        Assert.Equal(1, result.CreatedModels);
+        Assert.Equal(1, result.CreatedAssets);
+        Assert.Empty(result.Failures);
+        var categoryCreate = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post && request.PathAndQuery == "/api/v1/categories");
+        Assert.Contains("\"name\":\"Laptop\"", categoryCreate.Content);
+        Assert.Contains("\"category_type\":\"asset\"", categoryCreate.Content);
+    }
+
+    [Fact]
+    public async Task ImportAsync_CreatesAllMissingReferencesBeforeHardwareWrites()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(30, "Dell")));
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(10));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(20));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(40));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(704));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.CreatedCompanies);
+        Assert.Equal(1, result.CreatedCategories);
+        Assert.Equal(1, result.CreatedModels);
+        Assert.Equal(1, result.CreatedAssets);
+        var companyPostIndex = FindRequestIndex(handler, HttpMethod.Post, "/api/v1/companies");
+        var categoryPostIndex = FindRequestIndex(handler, HttpMethod.Post, "/api/v1/categories");
+        var modelPostIndex = FindRequestIndex(handler, HttpMethod.Post, "/api/v1/models");
+        var hardwarePostIndex = FindRequestIndex(handler, HttpMethod.Post, "/api/v1/hardware");
+        Assert.True(companyPostIndex < categoryPostIndex);
+        Assert.True(categoryPostIndex < modelPostIndex);
+        Assert.True(modelPostIndex < hardwarePostIndex);
     }
 
     [Fact]
@@ -279,6 +350,7 @@ public sealed class SnipeImporterTests
             {
                 Assert.True(File.Exists(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv")));
                 Assert.True(File.Exists(Path.Combine(preflightDirectory, "snipeit-companies-plan.csv")));
+                Assert.True(File.Exists(Path.Combine(preflightDirectory, "snipeit-categories-plan.csv")));
                 Assert.True(File.Exists(Path.Combine(preflightDirectory, "snipeit-models-plan.csv")));
             }
         };
@@ -304,11 +376,42 @@ public sealed class SnipeImporterTests
         Assert.Equal(1, result.CreatedAssets);
         var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
         var companyCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-companies-plan.csv"));
+        var categoryCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-categories-plan.csv"));
         var modelCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-models-plan.csv"));
         Assert.Contains("Operation", assetCsv);
         Assert.Contains("Add,TAG-001,Device 1,SN-001,Acme,Latitude,Laptop,Dell", assetCsv);
         Assert.Contains("Add,Acme", companyCsv);
+        Assert.Contains("Operation,Name,CategoryType", categoryCsv);
         Assert.Contains("Add,Latitude,Laptop,20,Dell,30", modelCsv);
+    }
+
+    [Fact]
+    public async Task ImportAsync_WritesMissingCategoryPreflightCsv_WhenCategoryWillBeCreated()
+    {
+        var preflightDirectory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(10, "Acme")));
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(30, "Dell")));
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(dryRun: true, preflightDirectory: preflightDirectory),
+            CancellationToken.None);
+
+        Assert.True(result.DryRun);
+        Assert.Equal(1, result.CreatedCategories);
+        Assert.Equal(1, result.CreatedModels);
+        Assert.Equal(1, result.CreatedAssets);
+        var categoryCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-categories-plan.csv"));
+        var modelCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-models-plan.csv"));
+        Assert.Contains("Add,Laptop,asset", categoryCsv);
+        Assert.Contains("Add,Latitude,Laptop,,Dell,30", modelCsv);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
     }
 
     [Fact]
@@ -358,6 +461,58 @@ public sealed class SnipeImporterTests
         Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
     }
 
+    [Fact]
+    public async Task ImportAsync_WritesBlockedAssetRowsToPreflightCsv_WhenPlanningFails()
+    {
+        var preflightDirectory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(
+                dryRun: true,
+                preflightDirectory: preflightDirectory,
+                createMissingCompanies: false),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.FailedAssets);
+        var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
+        Assert.Contains("FailureCode", assetCsv);
+        Assert.Contains("Blocked,TAG-001,Device 1,SN-001,Acme,Latitude,Laptop,Dell,,,SnipeImport.CompanyMissing", assetCsv);
+        Assert.Contains("Company 'Acme' does not exist and creation is disabled.", assetCsv);
+        Assert.DoesNotContain(handler.Requests, request => request.PathAndQuery.StartsWith("/api/v1/hardware", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
+    }
+
+    [Fact]
+    public async Task ImportAsync_ReusesReferenceLookups_ForRepeatedReferenceNames()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        handler.QueueResponse(HttpStatusCode.OK, BusinessNotFound());
+        handler.QueueResponse(HttpStatusCode.OK, EmptyRows());
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(
+                CreateRecord(assetTag: "TAG-001", name: "Device 1", serial: "SN-001", macAddresses: ["00-11-22-33-44-55"]),
+                CreateRecord(assetTag: "TAG-002", name: "Device 2", serial: "SN-002", macAddresses: ["66-77-88-99-AA-BB"])),
+            CreateOptions(dryRun: true),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.CreatedAssets);
+        Assert.Equal(1, CountRequests(handler, "/api/v1/companies"));
+        Assert.Equal(1, CountRequests(handler, "/api/v1/categories"));
+        Assert.Equal(1, CountRequests(handler, "/api/v1/manufacturers"));
+        Assert.Equal(1, CountRequests(handler, "/api/v1/models"));
+    }
+
     private static void QueueDependencyLookups(StubHttpMessageHandler handler)
     {
         handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(10, "Acme")));
@@ -379,15 +534,36 @@ public sealed class SnipeImporterTests
             new FixedTimeProvider(utcNow));
     }
 
-    private static SnipeImportOptions CreateOptions(bool dryRun = false, string? preflightDirectory = null)
+    private static int CountRequests(StubHttpMessageHandler handler, string pathPrefix)
+    {
+        return handler.Requests.Count(request => request.PathAndQuery.StartsWith(pathPrefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static int FindRequestIndex(
+        StubHttpMessageHandler handler,
+        HttpMethod method,
+        string pathAndQuery)
+    {
+        var index = handler.Requests.FindIndex(request =>
+            request.Method == method
+            && string.Equals(request.PathAndQuery, pathAndQuery, StringComparison.OrdinalIgnoreCase));
+        Assert.True(index >= 0, $"Expected {method} {pathAndQuery} request.");
+        return index;
+    }
+
+    private static SnipeImportOptions CreateOptions(
+        bool dryRun = false,
+        string? preflightDirectory = null,
+        bool createMissingCompanies = true,
+        bool createMissingModels = true)
     {
         return new SnipeImportOptions
         {
             BaseUrl = "https://snipe.example.com/api/v1",
             ApiToken = "secret-token",
             DryRun = dryRun,
-            CreateMissingCompanies = true,
-            CreateMissingModels = true,
+            CreateMissingCompanies = createMissingCompanies,
+            CreateMissingModels = createMissingModels,
             MacAddressCustomFieldDbColumnName = "_snipeit_mac_address_5",
             NameMatchThreshold = 0.92,
             ManualPreflightCsvEnabled = preflightDirectory is not null,
@@ -514,6 +690,14 @@ public sealed class SnipeImporterTests
         public override DateTimeOffset GetUtcNow()
         {
             return utcNow;
+        }
+    }
+
+    private sealed class CapturingProgress(List<SyncProgressUpdate> updates) : IProgress<SyncProgressUpdate>
+    {
+        public void Report(SyncProgressUpdate value)
+        {
+            updates.Add(value);
         }
     }
 }

@@ -38,6 +38,7 @@ public sealed class MappingOptions
     public required string DefaultModelName { get; init; }
     public required string DefaultCategoryName { get; init; }
     public required int DefaultStatusId { get; init; }
+    public IReadOnlyDictionary<string, string> CompanyAliases { get; init; }
 }
 ```
 
@@ -193,11 +194,13 @@ internal static class MappingValueResolver
 
 - 解析 company / manufacturer / model / category 字段
 - 对缺失字段使用 `MappingOptions` 默认值
+- 对 company 应用 `MappingOptions.CompanyAliases`，把 Atera/customer name 转换成 canonical Snipe-IT company name
 - 对 company / manufacturer / model fallback 产生 warning
 
 字段映射：
 
 - `CompanyName` 优先使用 `agent.CustomerName`，否则使用 `options.DefaultCompanyName`
+- `CompanyAliases` lookup 应 trim source/target，source 比较应忽略大小写；alias target 为空白时忽略该 alias
 - `ManufacturerName` 优先使用 `agent.Manufacturer`，否则使用 `options.DefaultManufacturerName`
 - `ModelName` 优先使用 `agent.Model`，否则使用 `options.DefaultModelName`
 - `CategoryName` 使用 `options.DefaultCategoryName`
