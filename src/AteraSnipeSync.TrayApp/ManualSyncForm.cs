@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using AteraSnipeSync.Core.Atera;
 using AteraSnipeSync.Core.Common;
@@ -19,8 +20,11 @@ public sealed class ManualSyncForm : Form
 {
     private const string DefaultAteraBaseUrl = "https://app.atera.com/api/v3";
     private const string ExampleSnipeHost = "snipe.example.com";
+    private static readonly string[] CommonDeviceTypes = ["Server", "PC", "Workstation", "Mac", "Linux", "SNMP", "TCP"];
 
     private readonly LocalAppSettingsStore _settingsStore;
+    private readonly DailyLogWriter _dailyLogWriter;
+    private readonly DailyLogWriter _dailyErrorLogWriter;
     private readonly TextBox _ateraBaseUrlTextBox = new();
     private readonly TextBox _ateraApiKeyTextBox = new();
     private readonly TextBox _snipeBaseUrlTextBox = new();
@@ -28,10 +32,15 @@ public sealed class ManualSyncForm : Form
     private readonly TextBox _defaultCompanyTextBox = new();
     private readonly TextBox _companyAliasesTextBox = new();
     private readonly TextBox _defaultManufacturerTextBox = new();
+    private readonly TextBox _manufacturerAliasesTextBox = new();
     private readonly TextBox _defaultModelTextBox = new();
     private readonly TextBox _defaultCategoryTextBox = new();
+    private readonly TextBox _modelCategoriesToNormalizeTextBox = new();
+    private readonly CheckedListBox _ignoredDeviceTypesCheckedListBox = new();
     private readonly NumericUpDown _defaultStatusIdInput = new();
     private readonly TextBox _macCustomFieldTextBox = new();
+    private readonly TextBox _macFieldsetNameTextBox = new();
+    private readonly TextBox _ignoredMacAddressesTextBox = new();
     private readonly NumericUpDown _nameMatchThresholdInput = new();
     private readonly CheckBox _createMissingCompaniesCheckBox = new();
     private readonly CheckBox _createMissingModelsCheckBox = new();
@@ -39,6 +48,7 @@ public sealed class ManualSyncForm : Form
     private readonly Button _saveConfigButton = new();
     private readonly Button _testAteraConnectionButton = new();
     private readonly Button _testSnipeConnectionButton = new();
+    private readonly Button _normalizeModelCategoriesButton = new();
     private readonly Button _previewChangesButton = new();
     private readonly Button _syncNowButton = new();
     private readonly Button _cancelRunButton = new();
@@ -50,9 +60,8 @@ public sealed class ManualSyncForm : Form
 
     private CancellationTokenSource? _runCancellation;
     private string? _lastPreflightDirectory;
-    private DateTimeOffset _lastProgressLogAt = DateTimeOffset.MinValue;
-    private string? _lastProgressLogStage;
     private bool _dailyLogWriteFailureReported;
+    private bool _dailyErrorLogWriteFailureReported;
 
     /// <summary>
     /// Creates the default manual sync window using the shared ProgramData local settings path.
@@ -70,6 +79,9 @@ public sealed class ManualSyncForm : Form
         ArgumentNullException.ThrowIfNull(settingsStore);
 
         _settingsStore = settingsStore;
+        var logDirectory = LocalAppSettingsStore.GetDefaultLogDirectory();
+        _dailyLogWriter = new DailyLogWriter(logDirectory);
+        _dailyErrorLogWriter = new DailyLogWriter(logDirectory, "ManualSync_Error");
         InitializeComponent();
     }
 
@@ -89,6 +101,13 @@ public sealed class ManualSyncForm : Form
     {
         _runCancellation?.Cancel();
         base.OnFormClosing(e);
+    }
+
+    protected override async void OnFormClosed(FormClosedEventArgs e)
+    {
+        await _dailyLogWriter.DisposeAsync().ConfigureAwait(true);
+        await _dailyErrorLogWriter.DisposeAsync().ConfigureAwait(true);
+        base.OnFormClosed(e);
     }
 
     private void InitializeComponent()
@@ -158,10 +177,20 @@ public sealed class ManualSyncForm : Form
         AddTextRow(grid, "Default Company", _defaultCompanyTextBox, "Unknown Company", password: false);
         AddMultilineTextRow(grid, "Company Aliases", _companyAliasesTextBox);
         AddTextRow(grid, "Default Manufacturer", _defaultManufacturerTextBox, "Unknown Manufacturer", password: false);
+        AddMultilineTextRow(grid, "Manufacturer Aliases", _manufacturerAliasesTextBox);
         AddTextRow(grid, "Default Model", _defaultModelTextBox, "Unknown Model", password: false);
         AddTextRow(grid, "Default Category", _defaultCategoryTextBox, "Computer", password: false);
+        AddTextRow(
+            grid,
+            "Normalize From Categories (;)",
+            _modelCategoriesToNormalizeTextBox,
+            "Server; Laptop; Desktop",
+            password: false);
+        AddCheckedListRow(grid, "Ignore Device Types", _ignoredDeviceTypesCheckedListBox, CommonDeviceTypes);
         AddNumericRow(grid, "Default Status ID", _defaultStatusIdInput, minimum: 1, maximum: 999999, value: 2);
         AddTextRow(grid, "MAC Custom Field DB Column", _macCustomFieldTextBox, string.Empty, password: false);
+        AddTextRow(grid, "MAC Fieldset Name", _macFieldsetNameTextBox, string.Empty, password: false);
+        AddTextRow(grid, "Ignore MAC Addresses (; separated)", _ignoredMacAddressesTextBox, string.Empty, password: false);
         AddDecimalRow(grid, "Name Match Threshold", _nameMatchThresholdInput, value: 0.92M);
         AddCheckRow(grid, "Create Missing Companies", _createMissingCompaniesCheckBox, isChecked: true);
         AddCheckRow(grid, "Create Missing Models", _createMissingModelsCheckBox, isChecked: false);
@@ -298,7 +327,7 @@ public sealed class ManualSyncForm : Form
         textBox.Multiline = true;
         textBox.ScrollBars = ScrollBars.Vertical;
         textBox.Height = 72;
-        textBox.PlaceholderText = "Atera company => Snipe-IT company";
+        textBox.PlaceholderText = "Atera company=Snipe-IT company";
         grid.Controls.Add(textBox, 1, grid.RowCount - 1);
     }
 
@@ -328,6 +357,26 @@ public sealed class ManualSyncForm : Form
         checkBox.Checked = isChecked;
         checkBox.AutoSize = true;
         grid.Controls.Add(checkBox, 1, grid.RowCount - 1);
+    }
+
+    private static void AddCheckedListRow(
+        TableLayoutPanel grid,
+        string labelText,
+        CheckedListBox checkedListBox,
+        IReadOnlyList<string> values)
+    {
+        AddLabel(grid, labelText);
+        checkedListBox.CheckOnClick = true;
+        checkedListBox.Height = 96;
+        checkedListBox.IntegralHeight = false;
+        checkedListBox.MultiColumn = true;
+        checkedListBox.Dock = DockStyle.Fill;
+        foreach (var value in values)
+        {
+            checkedListBox.Items.Add(value);
+        }
+
+        grid.Controls.Add(checkedListBox, 1, grid.RowCount - 1);
     }
 
     private static void AddLabel(TableLayoutPanel grid, string labelText)
@@ -362,7 +411,7 @@ public sealed class ManualSyncForm : Form
             }
 
             ApplyManualSyncSettings(settings);
-            AppendLog("Loaded saved manual sync config from local settings.");
+            AppendLog("Loaded Manual Sync test configuration, including saved API credentials, from the local settings file.");
         }
         catch (Exception exception)
         {
@@ -378,7 +427,7 @@ public sealed class ManualSyncForm : Form
             await _settingsStore
                 .SaveManualSyncSettingsAsync(settings, CancellationToken.None)
                 .ConfigureAwait(true);
-            AppendLog("Saved manual sync config locally.");
+            AppendLog($"Saved Manual Sync test configuration, including API credentials, to {LocalAppSettingsStore.GetDefaultFilePath()}. Treat this plaintext file as sensitive.");
         }
         catch (Exception exception)
         {
@@ -396,7 +445,14 @@ public sealed class ManualSyncForm : Form
         SetTextIfPresent(_defaultManufacturerTextBox, settings.DefaultManufacturerName);
         SetTextIfPresent(_defaultModelTextBox, settings.DefaultModelName);
         SetTextIfPresent(_defaultCategoryTextBox, settings.DefaultCategoryName);
+        if (settings.ModelCategoriesToNormalize.Count > 0)
+        {
+            _modelCategoriesToNormalizeTextBox.Text = string.Join("; ", settings.ModelCategoriesToNormalize);
+        }
+
         SetTextIfPresent(_macCustomFieldTextBox, settings.MacAddressCustomFieldDbColumnName);
+        SetTextIfPresent(_macFieldsetNameTextBox, settings.MacAddressFieldsetName);
+        _ignoredMacAddressesTextBox.Text = string.Join("; ", settings.IgnoredMacAddresses);
         if (settings.DefaultStatusId.HasValue)
         {
             SetNumericIfInRange(_defaultStatusIdInput, settings.DefaultStatusId.Value);
@@ -417,11 +473,42 @@ public sealed class ManualSyncForm : Form
             _createMissingModelsCheckBox.Checked = settings.CreateMissingModels.Value;
         }
 
+        ApplyIgnoredDeviceTypes(settings.IgnoredDeviceTypes);
+
         if (settings.CompanyAliases.Count > 0)
         {
             _companyAliasesTextBox.Text = string.Join(
                 Environment.NewLine,
-                settings.CompanyAliases.Select(alias => $"{alias.Key} => {alias.Value}"));
+                settings.CompanyAliases.Select(alias => $"{alias.Key}={alias.Value}"));
+        }
+
+        if (settings.ManufacturerAliases.Count > 0)
+        {
+            _manufacturerAliasesTextBox.Text = string.Join(
+                Environment.NewLine,
+                settings.ManufacturerAliases.Select(alias => $"{alias.Key}={alias.Value}"));
+        }
+    }
+
+    private void ApplyIgnoredDeviceTypes(IReadOnlyList<string> ignoredDeviceTypes)
+    {
+        var normalizedIgnoredDeviceTypes = new HashSet<string>(
+            ignoredDeviceTypes
+                .Select(deviceType => deviceType?.Trim())
+                .Where(deviceType => !string.IsNullOrWhiteSpace(deviceType))
+                .Select(deviceType => deviceType!),
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var index = 0; index < _ignoredDeviceTypesCheckedListBox.Items.Count; index++)
+        {
+            var deviceType = _ignoredDeviceTypesCheckedListBox.Items[index].ToString();
+            var isChecked = deviceType is not null && normalizedIgnoredDeviceTypes.Remove(deviceType);
+            _ignoredDeviceTypesCheckedListBox.SetItemChecked(index, isChecked);
+        }
+
+        foreach (var extraDeviceType in normalizedIgnoredDeviceTypes)
+        {
+            _ignoredDeviceTypesCheckedListBox.Items.Add(extraDeviceType, isChecked: true);
         }
     }
 
@@ -458,7 +545,7 @@ public sealed class ManualSyncForm : Form
 
         try
         {
-            var ateraBaseUri = RequireAbsoluteUri(_ateraBaseUrlTextBox, "Atera API Base URL");
+            var ateraBaseUri = ApiEndpointValidator.ValidateAteraBaseUri(RequireText(_ateraBaseUrlTextBox, "Atera API Base URL"));
             var apiKey = RequireText(_ateraApiKeyTextBox, "Atera API Key");
             var progress = new Progress<SyncProgressUpdate>(HandleProgressUpdate);
 
@@ -473,7 +560,9 @@ public sealed class ManualSyncForm : Form
                 {
                     BaseUri = ateraBaseUri,
                     MaxRetryAttempts = 0,
-                    RetryDelay = TimeSpan.Zero
+                    RetryDelay = TimeSpan.Zero,
+                    ItemsPerPage = 1,
+                    MaxPages = 1
                 },
                 new SystemAteraClock(),
                 NullLogger<AteraClient>.Instance);
@@ -590,6 +679,193 @@ public sealed class ManualSyncForm : Form
     }
 
     /// <summary>
+    /// Scans all Snipe-IT models, confirms every non-target model, and updates them to the UI default category.
+    /// </summary>
+    private async Task NormalizeModelCategoriesAsync()
+    {
+        if (_runCancellation is not null)
+        {
+            return;
+        }
+
+        var logPath = ModelCategoryNormalizationLog.CreatePath(
+            LocalAppSettingsStore.GetDefaultLogDirectory(),
+            DateTimeOffset.Now);
+        var operationLogAvailable = true;
+        var cancellation = new CancellationTokenSource();
+        _runCancellation = cancellation;
+        ResetProgress("Scanning model categories...");
+        SetRunningState(isRunning: true);
+
+        async Task WriteOperationLogAsync(string message, bool showInUi = true)
+        {
+            if (showInUi)
+            {
+                AppendLog(message);
+            }
+
+            if (!operationLogAvailable)
+            {
+                return;
+            }
+
+            try
+            {
+                await ModelCategoryNormalizationLog
+                    .AppendAsync(logPath, message, CancellationToken.None)
+                    .ConfigureAwait(true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                operationLogAvailable = false;
+                AppendLog($"Could not write category normalization log: {exception.Message}");
+            }
+        }
+
+        try
+        {
+            var sourceCategoryNames = RequireSemicolonSeparatedValues(
+                _modelCategoriesToNormalizeTextBox,
+                "Normalize From Categories");
+
+            var options = new SnipeModelCategoryNormalizationOptions
+            {
+                BaseUrl = RequireSnipeBaseUri().AbsoluteUri.TrimEnd('/'),
+                ApiToken = RequireText(_snipeApiTokenTextBox, "Snipe-IT API Token"),
+                TargetCategoryName = RequireText(_defaultCategoryTextBox, "Default Category"),
+                SourceCategoryNames = sourceCategoryNames
+            };
+            await WriteOperationLogAsync(
+                $"BEGIN model category normalization. Source categories: {string.Join(", ", sourceCategoryNames)}. Target category: {options.TargetCategoryName}.")
+                .ConfigureAwait(true);
+
+            using var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(60)
+            };
+            var normalizer = new SnipeModelCategoryNormalizer(
+                httpClient,
+                NullLogger<SnipeModelCategoryNormalizer>.Instance);
+            var progress = new Progress<SyncProgressUpdate>(HandleProgressUpdate);
+            var plan = await normalizer
+                .PlanAsync(options, cancellation.Token, progress)
+                .ConfigureAwait(true);
+
+            await WriteOperationLogAsync(
+                $"SCAN complete. Models scanned={plan.ScannedModelCount}; source categories={string.Join(", ", plan.SourceCategoryNames)}; candidate models={plan.Models.Count}; target category={plan.TargetCategoryName} (id {plan.TargetCategoryId}).")
+                .ConfigureAwait(true);
+            foreach (var candidate in plan.Models)
+            {
+                await WriteOperationLogAsync(
+                    $"PLAN model id={candidate.ModelId}; name='{candidate.ModelName}'; category='{candidate.SourceCategoryName}' -> '{plan.TargetCategoryName}'.",
+                    showInUi: false).ConfigureAwait(true);
+            }
+
+            if (!operationLogAvailable)
+            {
+                MarkProgressStopped("Category normalization stopped because its audit log is unavailable.");
+                return;
+            }
+
+            if (plan.Models.Count == 0)
+            {
+                HandleProgressUpdate(new SyncProgressUpdate
+                {
+                    Stage = "CategoryNormalize",
+                    Message = $"No models in {string.Join(", ", plan.SourceCategoryNames)} require a change to '{plan.TargetCategoryName}'.",
+                    Percent = 100
+                });
+                await WriteOperationLogAsync("END success. No candidate models; no PUT requests were sent.")
+                    .ConfigureAwait(true);
+                return;
+            }
+
+            var confirmation = MessageBox.Show(
+                this,
+                $"The scan read {plan.ScannedModelCount} models.\n\n"
+                + $"Source categories: {string.Join(", ", plan.SourceCategoryNames)}.\n"
+                + $"{plan.Models.Count} matching models currently use another category.\n"
+                + $"Their category will be changed to '{plan.TargetCategoryName}'.\n\n"
+                + "Categories not listed above will not be changed. Category belongs to the Model, "
+                + "so each update affects every asset using that Model. Continue?",
+                "Confirm Model Category Normalization",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirmation != DialogResult.Yes)
+            {
+                MarkProgressStopped("Category normalization canceled before any updates.");
+                await WriteOperationLogAsync("END canceled by operator before any PUT request.")
+                    .ConfigureAwait(true);
+                return;
+            }
+
+            await WriteOperationLogAsync("Operator confirmed model category updates.")
+                .ConfigureAwait(true);
+            if (!operationLogAvailable)
+            {
+                MarkProgressStopped("Category normalization stopped because its audit log is unavailable.");
+                return;
+            }
+
+            var result = await normalizer
+                .ExecuteAsync(plan, options, cancellation.Token, progress)
+                .ConfigureAwait(true);
+            foreach (var outcome in result.Outcomes)
+            {
+                var detail = outcome.Success
+                    ? "SUCCESS"
+                    : $"FAILED code={outcome.ErrorCode}; reason={outcome.ErrorMessage}";
+                await WriteOperationLogAsync(
+                    $"{detail}; model id={outcome.ModelId}; name='{outcome.ModelName}'; category='{outcome.SourceCategoryName}' -> '{outcome.TargetCategoryName}'.")
+                    .ConfigureAwait(true);
+            }
+
+            var summary = $"Category normalization summary: updated models={result.UpdatedModelCount}; failed models={result.FailedModelCount}; canceled={result.Cancelled}.";
+            await WriteOperationLogAsync(summary).ConfigureAwait(true);
+            if (result.Success)
+            {
+                HandleProgressUpdate(new SyncProgressUpdate
+                {
+                    Stage = "CategoryNormalize",
+                    Message = "Model category normalization completed successfully.",
+                    Percent = 100
+                });
+                await WriteOperationLogAsync("END success.", showInUi: false).ConfigureAwait(true);
+            }
+            else
+            {
+                MarkProgressStopped(result.Cancelled
+                    ? "Category normalization canceled with a partial result."
+                    : "Category normalization finished with model update failures.");
+                await WriteOperationLogAsync(
+                    result.Cancelled ? "END partial/canceled." : "END with failures.",
+                    showInUi: false).ConfigureAwait(true);
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            MarkProgressStopped("Category normalization canceled during the read-only scan.");
+            await WriteOperationLogAsync("END canceled during the read-only scan; no pending PUT was interrupted.")
+                .ConfigureAwait(true);
+        }
+        catch (Exception exception)
+        {
+            MarkProgressStopped("Category normalization failed.");
+            await WriteOperationLogAsync($"END failed: {exception.Message}").ConfigureAwait(true);
+        }
+        finally
+        {
+            _runCancellation.Dispose();
+            _runCancellation = null;
+            SetRunningState(isRunning: false);
+            AppendLog(operationLogAvailable
+                ? $"Category normalization log: {logPath}"
+                : $"Category normalization log could not be completed. Intended path: {logPath}");
+        }
+    }
+
+    /// <summary>
     /// Runs a preview or real manual sync from UI-provided settings, preserving secrets and reporting only safe summaries.
     /// </summary>
     private async Task RunManualSyncAsync(bool previewOnly)
@@ -620,24 +896,45 @@ public sealed class ManualSyncForm : Form
                 ? ManualSyncRequestFactory.CreatePreviewChangesRequest(baseRequest, _lastPreflightDirectory!)
                 : ManualSyncRequestFactory.CreateSyncNowRequest(baseRequest);
 
-            AppendLog(previewOnly
+            var uiStageTracker = new ManualSyncUiStageTracker();
+            AppendFileLog(previewOnly
                 ? $"Starting preview. CSV folder: {_lastPreflightDirectory}"
                 : "Starting real manual sync.");
+            AppendUiLog(uiStageTracker.Start());
+            var progressCalculator = new ManualSyncProgressCalculator(previewOnly);
 
-            var progress = new Progress<SyncProgressUpdate>(HandleProgressUpdate);
+            var progress = new Progress<SyncProgressUpdate>(update =>
+            {
+                HandleProgressUpdate(update, progressCalculator);
+                var uiMilestone = uiStageTracker.Observe(update);
+                if (uiMilestone is not null)
+                {
+                    AppendUiLog(uiMilestone);
+                }
+            });
             var result = await RunPipelineAsync(request, ateraBaseUri, progress, cancellation.Token).ConfigureAwait(true);
-            AppendResult(result, previewOnly ? _lastPreflightDirectory : null);
-            await SaveRunReportAsync(result, cancellation.Token).ConfigureAwait(true);
+            AppendDetailedResult(result, previewOnly ? _lastPreflightDirectory : null);
+            foreach (var uiMilestone in uiStageTracker.Complete())
+            {
+                AppendUiLog(uiMilestone);
+            }
+
+            var savedReportPath = await SaveRunReportAsync(result, CancellationToken.None).ConfigureAwait(true);
+            AppendErrorResult(result, previewOnly, savedReportPath);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
             MarkProgressStopped("Run canceled.");
-            AppendLog("Run canceled.");
+            AppendFileLog("Run canceled.");
+            AppendUiLog("Sync canceled.");
         }
         catch (Exception exception)
         {
             MarkProgressStopped("Run failed before completion.");
-            AppendLog($"Run failed before completion: {exception.Message}");
+            var failureMessage = $"Run failed before completion: {exception.Message}";
+            AppendFileLog(failureMessage);
+            AppendUiLog("Sync failed.");
+            AppendStandaloneError(previewOnly ? "Preview" : "Sync", failureMessage);
         }
         finally
         {
@@ -665,7 +962,10 @@ public sealed class ManualSyncForm : Form
                 DefaultModelName = settings.DefaultModelName!,
                 DefaultCategoryName = settings.DefaultCategoryName!,
                 DefaultStatusId = settings.DefaultStatusId!.Value,
-                CompanyAliases = settings.CompanyAliases
+                CompanyAliases = settings.CompanyAliases,
+                ManufacturerAliases = settings.ManufacturerAliases,
+                IgnoredDeviceTypes = settings.IgnoredDeviceTypes,
+                IgnoredMacAddresses = settings.IgnoredMacAddresses
             },
             SnipeIt = new SnipeImportOptions
             {
@@ -675,6 +975,10 @@ public sealed class ManualSyncForm : Form
                 CreateMissingCompanies = settings.CreateMissingCompanies ?? true,
                 CreateMissingModels = settings.CreateMissingModels ?? false,
                 MacAddressCustomFieldDbColumnName = settings.MacAddressCustomFieldDbColumnName,
+                MacAddressFieldsetName = settings.MacAddressFieldsetName,
+                ModelCategoryNormalizationTargetName = settings.DefaultCategoryName,
+                ModelCategoriesToNormalize = settings.ModelCategoriesToNormalize,
+                IgnoredMacAddresses = settings.IgnoredMacAddresses,
                 NameMatchThreshold = settings.NameMatchThreshold!.Value,
                 ManualPreflightCsvEnabled = false,
                 ManualPreflightCsvDirectory = null
@@ -689,9 +993,18 @@ public sealed class ManualSyncForm : Form
 
     private ManualSyncSettings BuildManualSyncSettings()
     {
+        var macCustomFieldDbColumnName = ReadOptionalText(_macCustomFieldTextBox);
+        var macAddressFieldsetName = ReadOptionalText(_macFieldsetNameTextBox);
+        if (string.IsNullOrWhiteSpace(macCustomFieldDbColumnName)
+            != string.IsNullOrWhiteSpace(macAddressFieldsetName))
+        {
+            throw new InvalidOperationException(
+                "MAC Custom Field DB Column and MAC Fieldset Name must be configured together.");
+        }
+
         return new ManualSyncSettings
         {
-            AteraBaseUrl = RequireAbsoluteUri(_ateraBaseUrlTextBox, "Atera API Base URL").AbsoluteUri.TrimEnd('/'),
+            AteraBaseUrl = ApiEndpointValidator.ValidateAteraBaseUri(RequireText(_ateraBaseUrlTextBox, "Atera API Base URL")).AbsoluteUri.TrimEnd('/'),
             AteraApiKey = RequireText(_ateraApiKeyTextBox, "Atera API Key"),
             SnipeItBaseUrl = RequireSnipeBaseUri().AbsoluteUri.TrimEnd('/'),
             SnipeItApiToken = RequireText(_snipeApiTokenTextBox, "Snipe-IT API Token"),
@@ -699,9 +1012,16 @@ public sealed class ManualSyncForm : Form
             DefaultManufacturerName = RequireText(_defaultManufacturerTextBox, "Default Manufacturer"),
             DefaultModelName = RequireText(_defaultModelTextBox, "Default Model"),
             DefaultCategoryName = RequireText(_defaultCategoryTextBox, "Default Category"),
+            ModelCategoriesToNormalize = RequireSemicolonSeparatedValues(
+                _modelCategoriesToNormalizeTextBox,
+                "Normalize From Categories"),
             DefaultStatusId = Convert.ToInt32(_defaultStatusIdInput.Value),
             CompanyAliases = ParseCompanyAliases(_companyAliasesTextBox.Text),
-            MacAddressCustomFieldDbColumnName = ReadOptionalText(_macCustomFieldTextBox),
+            ManufacturerAliases = ParseManufacturerAliases(_manufacturerAliasesTextBox.Text),
+            IgnoredDeviceTypes = ReadCheckedDeviceTypes(_ignoredDeviceTypesCheckedListBox),
+            MacAddressCustomFieldDbColumnName = macCustomFieldDbColumnName,
+            MacAddressFieldsetName = macAddressFieldsetName,
+            IgnoredMacAddresses = ParseSemicolonSeparatedValues(_ignoredMacAddressesTextBox.Text),
             NameMatchThreshold = Convert.ToDouble(_nameMatchThresholdInput.Value),
             CreateMissingCompanies = _createMissingCompaniesCheckBox.Checked,
             CreateMissingModels = _createMissingModelsCheckBox.Checked
@@ -735,55 +1055,163 @@ public sealed class ManualSyncForm : Form
         return await orchestrator.RunOnceAsync(request, cancellationToken, progress).ConfigureAwait(false);
     }
 
-    private void AppendResult(SyncRunResult result, string? preflightDirectory)
+    private void AppendDetailedResult(SyncRunResult result, string? preflightDirectory)
     {
         var isPreview = preflightDirectory is not null;
-        AppendLog(result.Success
+        AppendFileLog(result.Success
             ? $"{(isPreview ? "Preview" : "Run")} finished successfully."
             : $"{(isPreview ? "Preview" : "Run")} finished with failures.");
-        AppendLog($"Pulled agents: {result.PullResult?.Summary.AgentCount ?? 0}");
-        AppendLog($"Mapped assets: {result.ImportBatch?.Summary.MappedAssetCount ?? 0}");
+        AppendFileLog($"Pulled agents: {result.PullResult?.Summary.AgentCount ?? 0}");
+        AppendFileLog($"Mapped assets: {result.ImportBatch?.Summary.MappedAssetCount ?? 0}");
 
         if (result.ImportResult is not null)
         {
             if (isPreview)
             {
-                AppendLog(
+                AppendFileLog(
                     $"Preview summary: planned creates={result.ImportResult.CreatedAssets}, planned updates={result.ImportResult.UpdatedAssets}, blocked assets={result.ImportResult.FailedAssets}.");
-                AppendLog(
-                    $"Planned reference changes: companies={result.ImportResult.CreatedCompanies}, categories={result.ImportResult.CreatedCategories}, models={result.ImportResult.CreatedModels}.");
+                AppendFileLog(
+                    $"Planned reference changes: companies={result.ImportResult.CreatedCompanies}, categories={result.ImportResult.CreatedCategories}, models added={result.ImportResult.CreatedModels}, models updated={result.ImportResult.UpdatedModels}.");
             }
             else
             {
-                AppendLog(
+                AppendFileLog(
                     $"Import summary: created assets={result.ImportResult.CreatedAssets}, updated assets={result.ImportResult.UpdatedAssets}, failed assets={result.ImportResult.FailedAssets}.");
-                AppendLog(
-                    $"Reference changes: companies created={result.ImportResult.CreatedCompanies}, categories created={result.ImportResult.CreatedCategories}, models created={result.ImportResult.CreatedModels}.");
+                AppendFileLog(
+                    $"Reference changes: companies created={result.ImportResult.CreatedCompanies}, categories created={result.ImportResult.CreatedCategories}, models created={result.ImportResult.CreatedModels}, models updated={result.ImportResult.UpdatedModels}.");
             }
         }
 
-        AppendLog($"Warnings: {result.Warnings.Count}; failures: {result.Failures.Count}.");
+        AppendFileLog($"Warnings: {result.Warnings.Count}; failures: {result.Failures.Count}.");
 
-        foreach (var warning in result.Warnings.Take(5))
+        foreach (var warning in result.Warnings)
         {
-            AppendLog($"Warning {warning.Code}: {warning.Message}");
+            AppendFileLog($"Warning {warning.Code}: {warning.Message}");
         }
 
-        foreach (var failure in result.Failures.Take(5))
+        var failureReasonLines = BuildFailureReasonLines(result);
+        foreach (var line in failureReasonLines)
         {
-            AppendLog($"Failure {failure.Stage}/{failure.Code}: {failure.Message}");
+            AppendFileLog(line);
         }
 
         if (preflightDirectory is not null)
         {
-            AppendLog($"Preflight CSV folder: {preflightDirectory}");
+            AppendFileLog($"Preflight CSV folder: {preflightDirectory}");
         }
     }
 
     /// <summary>
-    /// Persists the completed manual run result as a structured local history report and logs the report directory.
+    /// Builds distinct safe failure lines, using pre-orchestration import messages so shared reference failures group across different asset targets.
     /// </summary>
-    private async Task SaveRunReportAsync(
+    private static IReadOnlyList<string> BuildFailureReasonLines(SyncRunResult result)
+    {
+        if (result.ImportResult?.Failures is { Count: > 0 } importFailures)
+        {
+            return importFailures
+                .GroupBy(failure => new { failure.Code, failure.Message })
+                .OrderByDescending(group => group.Count())
+                .ThenBy(group => group.Key.Code, StringComparer.Ordinal)
+                .ThenBy(group => group.Key.Message, StringComparer.Ordinal)
+                .Select(group =>
+                {
+                    var targetExamples = string.Join(
+                        ", ",
+                        group
+                            .Select(failure => $"{failure.TargetType} '{failure.TargetName}'")
+                            .Distinct(StringComparer.Ordinal)
+                            .Take(3));
+                    var remainingTargets = Math.Max(0, group.Count() - 3);
+                    var remainingSuffix = remainingTargets == 0
+                        ? string.Empty
+                        : $", +{remainingTargets} more";
+                    return $"Failure x{group.Count()} SnipeImport/{group.Key.Code}: {group.Key.Message} Affected: {targetExamples}{remainingSuffix}.";
+                })
+                .ToList();
+        }
+
+        return result.Failures
+            .GroupBy(failure => new { failure.Stage, failure.Code, failure.Message })
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key.Stage, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.Code, StringComparer.Ordinal)
+            .ThenBy(group => group.Key.Message, StringComparer.Ordinal)
+            .Select(group =>
+                $"Failure x{group.Count()} {group.Key.Stage}/{group.Key.Code}: {group.Key.Message}")
+            .ToList();
+    }
+
+    /// <summary>
+    /// Queues one complete, sanitized failure block for a completed failed Preview or Sync run.
+    /// </summary>
+    private void AppendErrorResult(SyncRunResult result, bool previewOnly, string? savedReportPath)
+    {
+        if (result.Success)
+        {
+            return;
+        }
+
+        var timestamp = DateTimeOffset.Now;
+        var mode = previewOnly ? "Preview" : "Sync";
+        var builder = new StringBuilder();
+        builder.AppendLine($"{timestamp:yyyy-MM-dd HH:mm:ss zzz} BEGIN FAILED {mode}");
+        builder.AppendLine($"Run UTC: {result.StartedAt.ToUniversalTime():O} to {result.FinishedAt.ToUniversalTime():O}");
+        builder.AppendLine(
+            $"Summary: pulled={result.PullResult?.Summary.AgentCount ?? 0}; mapped={result.ImportBatch?.Summary.MappedAssetCount ?? 0}; warnings={result.Warnings.Count}; failures={result.Failures.Count}.");
+
+        var failureLines = BuildFailureReasonLines(result);
+        if (failureLines.Count == 0)
+        {
+            builder.AppendLine("Failure: The run failed without a structured failure reason.");
+        }
+        else
+        {
+            foreach (var failureLine in failureLines)
+            {
+                builder.AppendLine(failureLine);
+            }
+        }
+
+        builder.AppendLine(savedReportPath is null
+            ? "History report: unavailable."
+            : $"History report: {savedReportPath}");
+        builder.AppendLine($"{timestamp:yyyy-MM-dd HH:mm:ss zzz} END FAILED {mode}");
+        builder.AppendLine();
+        QueueErrorLog(timestamp, builder.ToString());
+    }
+
+    /// <summary>
+    /// Records a sanitized failure that occurs before the pipeline can return a structured run result.
+    /// </summary>
+    private void AppendStandaloneError(string operation, string message)
+    {
+        var timestamp = DateTimeOffset.Now;
+        var block = $"{timestamp:yyyy-MM-dd HH:mm:ss zzz} {operation} failure before structured result: {message}{Environment.NewLine}{Environment.NewLine}";
+        QueueErrorLog(timestamp, block);
+    }
+
+    private void QueueErrorLog(DateTimeOffset timestamp, string block)
+    {
+        if (_dailyErrorLogWriter.TryWrite(timestamp, block))
+        {
+            AppendFileLog($"Dedicated error log: {_dailyErrorLogWriter.GetLogPath(timestamp)}");
+            return;
+        }
+
+        if (_dailyErrorLogWriteFailureReported)
+        {
+            return;
+        }
+
+        _dailyErrorLogWriteFailureReported = true;
+        var detail = _dailyErrorLogWriter.LastError?.Message ?? "the daily error-log writer is unavailable";
+        AppendFileLog($"Could not queue dedicated error log: {detail}");
+    }
+
+    /// <summary>
+    /// Persists the completed manual run result and returns the saved history report path when discoverable.
+    /// </summary>
+    private async Task<string?> SaveRunReportAsync(
         SyncRunResult result,
         CancellationToken cancellationToken)
     {
@@ -793,9 +1221,10 @@ public sealed class ManualSyncForm : Form
             var statusStore = new JsonFileSyncStatusStore(options, NullLogger<JsonFileSyncStatusStore>.Instance);
             await statusStore.SaveAsync(result, cancellationToken).ConfigureAwait(true);
             var savedReportPath = FindLatestRunReportPath(options.HistoryDirectoryPath);
-            AppendLog(savedReportPath is null
+            AppendFileLog(savedReportPath is null
                 ? $"Saved run report/status history under: {Path.GetFullPath(options.HistoryDirectoryPath)}"
                 : $"Saved run report/status history: {savedReportPath}");
+            return savedReportPath;
         }
         catch (OperationCanceledException)
         {
@@ -803,7 +1232,8 @@ public sealed class ManualSyncForm : Form
         }
         catch (Exception exception)
         {
-            AppendLog($"Could not save run report/status history: {exception.Message}");
+            AppendFileLog($"Could not save run report/status history: {exception.Message}");
+            return null;
         }
     }
 
@@ -838,6 +1268,44 @@ public sealed class ManualSyncForm : Form
         return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
+    /// <summary>
+    /// Splits an operator-entered semicolon list while preserving values for Core validation and normalization.
+    /// </summary>
+    private static IReadOnlyList<string> ParseSemicolonSeparatedValues(string? text)
+    {
+        return string.IsNullOrWhiteSpace(text)
+            ? []
+            : text.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+    }
+
+    /// <summary>
+    /// Parses one required semicolon-delimited UI field and fails before any API or settings write when it is empty.
+    /// </summary>
+    private static IReadOnlyList<string> RequireSemicolonSeparatedValues(TextBox textBox, string fieldName)
+    {
+        var values = ParseSemicolonSeparatedValues(textBox.Text);
+        return values.Count == 0
+            ? throw new InvalidOperationException($"{fieldName} requires at least one category.")
+            : values;
+    }
+
+    private static IReadOnlyList<string> ReadCheckedDeviceTypes(CheckedListBox checkedListBox)
+    {
+        var selectedDeviceTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in checkedListBox.CheckedItems)
+        {
+            var deviceType = item?.ToString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(deviceType))
+            {
+                selectedDeviceTypes.Add(deviceType);
+            }
+        }
+
+        return selectedDeviceTypes.ToList();
+    }
+
     private static Uri RequireAbsoluteUri(TextBox textBox, string fieldName)
     {
         var value = RequireText(textBox, fieldName);
@@ -850,6 +1318,31 @@ public sealed class ManualSyncForm : Form
     /// Parses operator-entered company aliases without persisting them or calling external systems.
     /// </summary>
     private static IReadOnlyDictionary<string, string> ParseCompanyAliases(string? aliasesText)
+    {
+        return ParseAliases(
+            aliasesText,
+            "Company",
+            "Atera company=Snipe-IT company");
+    }
+
+    /// <summary>
+    /// Parses operator-entered manufacturer aliases without fuzzy matching or external lookups.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ParseManufacturerAliases(string? aliasesText)
+    {
+        return ParseAliases(
+            aliasesText,
+            "Manufacturer",
+            "Atera manufacturer=Snipe-IT manufacturer");
+    }
+
+    /// <summary>
+    /// Parses deterministic one-way aliases shared by company and manufacturer UI fields.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ParseAliases(
+        string? aliasesText,
+        string aliasType,
+        string expectedSyntax)
     {
         var aliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(aliasesText))
@@ -865,22 +1358,22 @@ public sealed class ManualSyncForm : Form
                 continue;
             }
 
-            var separator = line.Contains("=>", StringComparison.Ordinal)
-                ? "=>"
-                : "=";
-            var separatorIndex = line.IndexOf(separator, StringComparison.Ordinal);
-            if (separatorIndex <= 0 || separatorIndex + separator.Length >= line.Length)
+            var separatorIndex = line.IndexOf('=', StringComparison.Ordinal);
+            if (line.Contains("=>", StringComparison.Ordinal)
+                || separatorIndex <= 0
+                || separatorIndex != line.LastIndexOf("=", StringComparison.Ordinal)
+                || separatorIndex + 1 >= line.Length)
             {
                 throw new InvalidOperationException(
-                    $"Company alias line '{line}' must use 'Atera company => Snipe-IT company'.");
+                    $"{aliasType} alias line '{line}' must use '{expectedSyntax}'.");
             }
 
             var source = line[..separatorIndex].Trim();
-            var target = line[(separatorIndex + separator.Length)..].Trim();
+            var target = line[(separatorIndex + 1)..].Trim();
             if (source.Length == 0 || target.Length == 0)
             {
                 throw new InvalidOperationException(
-                    $"Company alias line '{line}' must include both source and target company names.");
+                    $"{aliasType} alias line '{line}' must include both source and target names.");
             }
 
             aliases[source] = target;
@@ -898,7 +1391,7 @@ public sealed class ManualSyncForm : Form
                 "Snipe-IT API Base URL is still using the example placeholder. Enter your real Snipe-IT URL, including /api/v1.");
         }
 
-        return uri;
+        return ApiEndpointValidator.ValidateSnipeBaseUri(uri.AbsoluteUri);
     }
 
     private static Uri BuildSnipeUri(Uri baseUri, string relativePath)
@@ -953,8 +1446,6 @@ public sealed class ManualSyncForm : Form
         _progressBar.Value = 0;
         _progressSummaryLabel.Text = "Progress: 0%";
         _progressDetailLabel.Text = message;
-        _lastProgressLogAt = DateTimeOffset.MinValue;
-        _lastProgressLogStage = null;
     }
 
     private void MarkProgressStopped(string message)
@@ -965,46 +1456,26 @@ public sealed class ManualSyncForm : Form
 
     private void HandleProgressUpdate(SyncProgressUpdate update)
     {
+        HandleProgressUpdate(update, manualSyncCalculator: null);
+    }
+
+    private void HandleProgressUpdate(
+        SyncProgressUpdate update,
+        ManualSyncProgressCalculator? manualSyncCalculator)
+    {
         if (InvokeRequired)
         {
-            BeginInvoke(() => HandleProgressUpdate(update));
+            BeginInvoke(() => HandleProgressUpdate(update, manualSyncCalculator));
             return;
         }
 
-        var value = CalculateProgressValue(update);
+        var value = manualSyncCalculator?.Calculate(update) ?? CalculateProgressValue(update);
         _progressBar.Value = value;
 
         var detail = BuildProgressDetail(update);
         _progressSummaryLabel.Text = $"Progress: {value}% - {update.Stage}";
         _progressDetailLabel.Text = detail;
-        if (ShouldAppendProgressLog(update, value))
-        {
-            AppendLog($"Progress {update.Stage}: {detail}");
-        }
-    }
-
-    private bool ShouldAppendProgressLog(SyncProgressUpdate update, int value)
-    {
-        var now = DateTimeOffset.Now;
-        var stageChanged = !string.Equals(_lastProgressLogStage, update.Stage, StringComparison.Ordinal);
-        var terminalOrImportant = value >= 100
-            || update.Message.Contains("failed", StringComparison.OrdinalIgnoreCase)
-            || update.Message.Contains("canceled", StringComparison.OrdinalIgnoreCase)
-            || update.Message.Contains("CSV", StringComparison.OrdinalIgnoreCase);
-        var milestone = update.Current is { } current
-            && update.Total is { } total
-            && total > 0
-            && (current == 0 || current == total || current % 50 == 0);
-        var heartbeat = now - _lastProgressLogAt >= TimeSpan.FromSeconds(3);
-
-        if (!stageChanged && !terminalOrImportant && !milestone && !heartbeat)
-        {
-            return false;
-        }
-
-        _lastProgressLogAt = now;
-        _lastProgressLogStage = update.Stage;
-        return true;
+        AppendFileLog($"Progress {update.Stage}: {detail}");
     }
 
     private int CalculateProgressValue(SyncProgressUpdate update)
@@ -1048,6 +1519,7 @@ public sealed class ManualSyncForm : Form
         _saveConfigButton.Enabled = !isRunning;
         _testAteraConnectionButton.Enabled = !isRunning;
         _testSnipeConnectionButton.Enabled = !isRunning;
+        _normalizeModelCategoriesButton.Enabled = !isRunning;
         _previewChangesButton.Enabled = !isRunning;
         _syncNowButton.Enabled = !isRunning;
         _cancelRunButton.Enabled = isRunning;
@@ -1073,42 +1545,40 @@ public sealed class ManualSyncForm : Form
     }
 
     /// <summary>
-    /// Writes one log line to the UI and to the ProgramData daily manual sync log file.
+    /// Writes one general-purpose log line to both the UI and the ProgramData daily manual sync log file.
     /// </summary>
     private void AppendLog(string message)
     {
         var now = DateTimeOffset.Now;
         var line = $"{now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}";
         _logTextBox.AppendText(line);
-        TryAppendDailyLogLine(now, line);
+        QueueDailyLog(now, line);
     }
 
-    private void TryAppendDailyLogLine(DateTimeOffset now, string line)
+    /// <summary>
+    /// Writes a concise milestone to the on-screen log without duplicating it into the detailed file log.
+    /// </summary>
+    private void AppendUiLog(string message)
     {
-        try
-        {
-            var logDirectory = LocalAppSettingsStore.GetDefaultLogDirectory();
-            Directory.CreateDirectory(logDirectory);
-            var logPath = Path.Combine(
-                logDirectory,
-                $"ManualSync_{now.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture)}.log");
-            if (!File.Exists(logPath))
-            {
-                File.WriteAllText(logPath, string.Empty);
-            }
+        _logTextBox.AppendText($"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+    }
 
-            File.AppendAllText(logPath, line);
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            if (_dailyLogWriteFailureReported)
-            {
-                return;
-            }
+    /// <summary>
+    /// Queues one detailed line for the daily file without exposing it in the on-screen log.
+    /// </summary>
+    private void AppendFileLog(string message)
+    {
+        var now = DateTimeOffset.Now;
+        QueueDailyLog(now, $"{now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+    }
 
+    private void QueueDailyLog(DateTimeOffset timestamp, string line)
+    {
+        if (!_dailyLogWriter.TryWrite(timestamp, line) && !_dailyLogWriteFailureReported)
+        {
             _dailyLogWriteFailureReported = true;
-            _logTextBox.AppendText(
-                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} Could not write ProgramData daily log: {exception.Message}{Environment.NewLine}");
+            var detail = _dailyLogWriter.LastError?.Message ?? "the daily log writer is unavailable";
+            _logTextBox.AppendText($"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss} Could not queue ProgramData daily log: {detail}{Environment.NewLine}");
         }
     }
 

@@ -77,9 +77,15 @@ public static class ManualSyncRequestFactory
             CreateMissingCompanies = source.CreateMissingCompanies,
             CreateMissingModels = source.CreateMissingModels,
             MacAddressCustomFieldDbColumnName = source.MacAddressCustomFieldDbColumnName,
+            MacAddressFieldsetName = source.MacAddressFieldsetName,
+            ModelCategoryNormalizationTargetName = source.ModelCategoryNormalizationTargetName,
+            ModelCategoriesToNormalize = source.ModelCategoriesToNormalize,
+            IgnoredMacAddresses = source.IgnoredMacAddresses,
             NameMatchThreshold = source.NameMatchThreshold,
             ManualPreflightCsvEnabled = manualPreflightCsvEnabled,
-            ManualPreflightCsvDirectory = manualPreflightCsvDirectory
+            ManualPreflightCsvDirectory = manualPreflightCsvDirectory,
+            MaxReadRetryAttempts = source.MaxReadRetryAttempts,
+            RetryBaseDelay = source.RetryBaseDelay
         };
     }
 }

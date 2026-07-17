@@ -7,4 +7,9 @@ internal sealed record SnipeAssetMatch(
     int Id,
     string Name,
     string? AssetTag,
-    string? Serial);
+    string? Serial,
+    string? CompanyName,
+    string? CategoryName,
+    string? ModelName,
+    string? Notes,
+    IReadOnlyDictionary<string, string> CustomFields);

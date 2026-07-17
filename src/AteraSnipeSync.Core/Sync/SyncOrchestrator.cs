@@ -89,7 +89,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             pullResult = await _ateraClient
                 .PullInventoryAsync(request.Atera, cancellationToken, progress)
                 .ConfigureAwait(false);
-            warnings.AddRange(pullResult.Warnings);
+            AddWarningsDistinct(warnings, pullResult.Warnings);
             ReportProgress(progress, $"Atera pull completed with {pullResult.Summary.AgentCount} agent(s).", percent: 35);
         }
         catch (OperationCanceledException)
@@ -108,7 +108,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         {
             ReportProgress(progress, "Mapping Atera agents into Snipe-IT asset records.", percent: 40);
             importBatch = _inventoryMapper.Map(pullResult, request.Mapping);
-            warnings.AddRange(importBatch.Warnings);
+            AddWarningsDistinct(warnings, importBatch.Warnings);
             ReportProgress(progress, $"Mapping completed with {importBatch.Summary.MappedAssetCount} asset(s).", percent: 45);
         }
         catch (OperationCanceledException)
@@ -131,7 +131,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
                 .ImportAsync(importBatch, snipeOptions, cancellationToken, progress)
                 .ConfigureAwait(false);
 
-            warnings.AddRange(importResult.Warnings);
+            AddWarningsDistinct(warnings, importResult.Warnings);
             failures.AddRange(importResult.Failures.Select(ToRunFailure));
             ReportProgress(progress, "Snipe-IT import stage completed.", percent: 95);
         }
@@ -200,9 +200,15 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             CreateMissingCompanies = source.CreateMissingCompanies,
             CreateMissingModels = source.CreateMissingModels,
             MacAddressCustomFieldDbColumnName = source.MacAddressCustomFieldDbColumnName,
+            MacAddressFieldsetName = source.MacAddressFieldsetName,
+            ModelCategoryNormalizationTargetName = source.ModelCategoryNormalizationTargetName,
+            ModelCategoriesToNormalize = source.ModelCategoriesToNormalize,
+            IgnoredMacAddresses = source.IgnoredMacAddresses,
             NameMatchThreshold = source.NameMatchThreshold,
             ManualPreflightCsvEnabled = source.ManualPreflightCsvEnabled,
-            ManualPreflightCsvDirectory = source.ManualPreflightCsvDirectory
+            ManualPreflightCsvDirectory = source.ManualPreflightCsvDirectory,
+            MaxReadRetryAttempts = source.MaxReadRetryAttempts,
+            RetryBaseDelay = source.RetryBaseDelay
         };
     }
 
@@ -211,7 +217,9 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         return new SyncFailure
         {
             Stage = stage,
-            Code = exception.GetType().Name,
+            Code = exception is AteraPullException ateraException
+                ? $"AteraPull.{ateraException.FailureKind}"
+                : exception.GetType().Name,
             Message = $"{stage} failed: {exception.Message}"
         };
     }
@@ -229,5 +237,29 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
     private void LogStageFailure(string stage, Exception exception)
     {
         _logger.LogError(exception, "Sync run failed during {Stage}.", stage);
+    }
+
+    /// <summary>
+    /// Preserves first-seen warning order while preventing an upstream warning from being aggregated more than once.
+    /// </summary>
+    private static void AddWarningsDistinct(
+        ICollection<ModuleWarning> destination,
+        IEnumerable<ModuleWarning> source)
+    {
+        var existing = destination
+            .Select(BuildWarningKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var warning in source)
+        {
+            if (existing.Add(BuildWarningKey(warning)))
+            {
+                destination.Add(warning);
+            }
+        }
+    }
+
+    private static string BuildWarningKey(ModuleWarning warning)
+    {
+        return $"{warning.Source}\u001f{warning.Code}\u001f{warning.Message}";
     }
 }

@@ -27,9 +27,15 @@ public static class ScheduledSyncRequestFactory
                 CreateMissingCompanies = baseRequest.SnipeIt.CreateMissingCompanies,
                 CreateMissingModels = baseRequest.SnipeIt.CreateMissingModels,
                 MacAddressCustomFieldDbColumnName = baseRequest.SnipeIt.MacAddressCustomFieldDbColumnName,
+                MacAddressFieldsetName = baseRequest.SnipeIt.MacAddressFieldsetName,
+                ModelCategoryNormalizationTargetName = baseRequest.SnipeIt.ModelCategoryNormalizationTargetName,
+                ModelCategoriesToNormalize = baseRequest.SnipeIt.ModelCategoriesToNormalize,
+                IgnoredMacAddresses = baseRequest.SnipeIt.IgnoredMacAddresses,
                 NameMatchThreshold = baseRequest.SnipeIt.NameMatchThreshold,
                 ManualPreflightCsvEnabled = false,
-                ManualPreflightCsvDirectory = null
+                ManualPreflightCsvDirectory = null,
+                MaxReadRetryAttempts = baseRequest.SnipeIt.MaxReadRetryAttempts,
+                RetryBaseDelay = baseRequest.SnipeIt.RetryBaseDelay
             },
             Sync = new SyncRunOptions
             {

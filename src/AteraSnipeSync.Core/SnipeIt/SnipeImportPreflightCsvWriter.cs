@@ -57,7 +57,7 @@ internal static class SnipeImportPreflightCsvWriter
     private static string BuildAssetsCsv(IReadOnlyList<SnipeAssetPreflightRow> rows)
     {
         var builder = new StringBuilder();
-        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag", "FailureCode", "FailureMessage");
+        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "MacAddresses", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag", "ConflictingFields", "ConflictingValue", "ConflictingAssets", "FailureCode", "FailureMessage", "DeviceType");
 
         foreach (var row in rows)
         {
@@ -67,14 +67,19 @@ internal static class SnipeImportPreflightCsvWriter
                 row.AssetTag,
                 row.Name,
                 row.Serial,
+                row.MacAddresses,
                 row.CompanyName,
                 row.ModelName,
                 row.CategoryName,
                 row.ManufacturerName,
                 row.ExistingAssetId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 row.ExistingAssetTag,
+                row.ConflictingFields,
+                row.ConflictingValue,
+                row.ConflictingAssets,
                 row.FailureCode,
-                row.FailureMessage);
+                row.FailureMessage,
+                row.DeviceType);
         }
 
         return builder.ToString();
@@ -109,7 +114,22 @@ internal static class SnipeImportPreflightCsvWriter
     private static string BuildModelsCsv(IReadOnlyList<SnipeModelPreflightRow> rows)
     {
         var builder = new StringBuilder();
-        AppendRow(builder, "Operation", "Name", "CategoryName", "CategoryId", "ManufacturerName", "ManufacturerId");
+        AppendRow(
+            builder,
+            "Operation",
+            "Name",
+            "ExistingModelId",
+            "CurrentCategoryName",
+            "CurrentCategoryId",
+            "TargetCategoryName",
+            "TargetCategoryId",
+            "ManufacturerName",
+            "ManufacturerId",
+            "CurrentFieldsetName",
+            "CurrentFieldsetId",
+            "TargetFieldsetName",
+            "TargetFieldsetId",
+            "ChangeReasons");
 
         foreach (var row in rows)
         {
@@ -117,10 +137,18 @@ internal static class SnipeImportPreflightCsvWriter
                 builder,
                 row.Operation,
                 row.Name,
-                row.CategoryName,
-                row.CategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.ExistingModelId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.CurrentCategoryName,
+                row.CurrentCategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.TargetCategoryName,
+                row.TargetCategoryId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 row.ManufacturerName,
-                row.ManufacturerId?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                row.ManufacturerId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.CurrentFieldsetName,
+                row.CurrentFieldsetId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.TargetFieldsetName,
+                row.TargetFieldsetId?.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                row.ChangeReasons);
         }
 
         return builder.ToString();
@@ -138,8 +166,25 @@ internal static class SnipeImportPreflightCsvWriter
             return string.Empty;
         }
 
-        return value.IndexOfAny([',', '"', '\r', '\n']) < 0
-            ? value
-            : $"\"{value.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+        var safeValue = NeutralizeFormula(value);
+        return safeValue.IndexOfAny([',', '"', '\r', '\n']) < 0
+            ? safeValue
+            : $"\"{safeValue.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+    }
+
+    /// <summary>
+    /// Prevents values controlled by external systems from being interpreted as formulas by spreadsheet applications.
+    /// </summary>
+    private static string NeutralizeFormula(string value)
+    {
+        var firstNonWhitespace = 0;
+        while (firstNonWhitespace < value.Length && char.IsWhiteSpace(value[firstNonWhitespace]))
+        {
+            firstNonWhitespace++;
+        }
+
+        return firstNonWhitespace < value.Length && value[firstNonWhitespace] is '=' or '+' or '-' or '@'
+            ? "'" + value
+            : value;
     }
 }

@@ -25,10 +25,10 @@ public sealed class LocalAppSettingsStoreTests
         var filePath = CreateTempFilePath();
         var store = new LocalAppSettingsStore(filePath);
 
-        await store.SaveAteraApiKeyAsync("  test-api-key  ", CancellationToken.None);
+        await store.SaveAteraApiKeyAsync(" test-api-key ", CancellationToken.None);
 
-        var result = await store.LoadAteraApiKeyAsync(CancellationToken.None);
-        Assert.Equal("test-api-key", result);
+        var reloadedStore = new LocalAppSettingsStore(filePath);
+        Assert.Equal("test-api-key", await reloadedStore.LoadAteraApiKeyAsync(CancellationToken.None));
     }
 
     [Fact]
@@ -41,11 +41,7 @@ public sealed class LocalAppSettingsStoreTests
             """
             {
               "SnipeIt": {
-                "BaseUrl": "https://snipe.example.com",
-                "DefaultStatusId": 2
-              },
-              "Sync": {
-                "IntervalMinutes": 30
+                "BaseUrl": "https://snipe.example.com/api/v1"
               }
             }
             """);
@@ -55,8 +51,7 @@ public sealed class LocalAppSettingsStoreTests
 
         var root = JsonNode.Parse(await File.ReadAllTextAsync(filePath))!.AsObject();
         Assert.Equal("test-api-key", root["Atera"]!["ApiKey"]!.GetValue<string>());
-        Assert.Equal("https://snipe.example.com", root["SnipeIt"]!["BaseUrl"]!.GetValue<string>());
-        Assert.Equal(30, root["Sync"]!["IntervalMinutes"]!.GetValue<int>());
+        Assert.Equal("https://snipe.example.com/api/v1", root["SnipeIt"]!["BaseUrl"]!.GetValue<string>());
     }
 
     [Fact]
@@ -92,7 +87,16 @@ public sealed class LocalAppSettingsStoreTests
         Assert.Equal("https://snipe.example.com/api/v1", root["SnipeIt"]!["BaseUrl"]!.GetValue<string>());
         Assert.Equal("snipe-token", root["SnipeIt"]!["ApiToken"]!.GetValue<string>());
         Assert.Equal(2, root["SnipeIt"]!["DefaultStatusId"]!.GetValue<int>());
+        Assert.Equal(
+            ["Server", "Laptop", "Desktop"],
+            root["SnipeIt"]!["ModelCategoriesToNormalize"]!.AsArray().Select(item => item!.GetValue<string>()));
+        Assert.Equal(
+            "Assets with MAC Address",
+            root["SnipeIt"]!["MacAddressFieldsetName"]!.GetValue<string>());
         Assert.Equal("_snipeit_mac_address_1", root["SnipeIt"]!["MacAddressCustomFieldDbColumnName"]!.GetValue<string>());
+        Assert.Equal(
+            ["00:09:0F:AA:00:01", "00:09:0F:FE:00:01"],
+            root["SnipeIt"]!["IgnoredMacAddresses"]!.AsArray().Select(item => item!.GetValue<string>()));
         Assert.Equal(0.92D, root["SnipeIt"]!["NameMatchThreshold"]!.GetValue<double>());
         Assert.True(root["SnipeIt"]!["CreateMissingCompanies"]!.GetValue<bool>());
         Assert.False(root["SnipeIt"]!["CreateMissingModels"]!.GetValue<bool>());
@@ -100,9 +104,14 @@ public sealed class LocalAppSettingsStoreTests
         Assert.Equal("Default Manufacturer", root["Mapping"]!["DefaultManufacturerName"]!.GetValue<string>());
         Assert.Equal("Default Model", root["Mapping"]!["DefaultModelName"]!.GetValue<string>());
         Assert.Equal("Computer", root["Mapping"]!["DefaultCategoryName"]!.GetValue<string>());
+        Assert.Null(root["Mapping"]!["DefaultComputerCategoryName"]);
+        Assert.Null(root["Mapping"]!["DefaultServerCategoryName"]);
         Assert.Equal(
             "Moore Equine Veterinary Centre",
             root["Mapping"]!["CompanyAliases"]!["Moore Equine Veterinary Centre - AR"]!.GetValue<string>());
+        Assert.Equal(
+            "Dell",
+            root["Mapping"]!["ManufacturerAliases"]!["Dell Inc."]!.GetValue<string>());
     }
 
     [Fact]
@@ -112,7 +121,8 @@ public sealed class LocalAppSettingsStoreTests
         var store = new LocalAppSettingsStore(filePath);
         await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
 
-        var result = await store.LoadManualSyncSettingsAsync(CancellationToken.None);
+        var reloadedStore = new LocalAppSettingsStore(filePath);
+        var result = await reloadedStore.LoadManualSyncSettingsAsync(CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("https://app.atera.com/api/v3", result.AteraBaseUrl);
@@ -123,14 +133,55 @@ public sealed class LocalAppSettingsStoreTests
         Assert.Equal("Default Manufacturer", result.DefaultManufacturerName);
         Assert.Equal("Default Model", result.DefaultModelName);
         Assert.Equal("Computer", result.DefaultCategoryName);
+        Assert.Equal(["Server", "Laptop", "Desktop"], result.ModelCategoriesToNormalize);
         Assert.Equal(2, result.DefaultStatusId);
+        Assert.Equal("Assets with MAC Address", result.MacAddressFieldsetName);
         Assert.Equal("_snipeit_mac_address_1", result.MacAddressCustomFieldDbColumnName);
+        Assert.Equal(["00:09:0F:AA:00:01", "00:09:0F:FE:00:01"], result.IgnoredMacAddresses);
         Assert.Equal(0.92D, result.NameMatchThreshold);
         Assert.True(result.CreateMissingCompanies);
         Assert.False(result.CreateMissingModels);
         Assert.Equal(
             "Moore Equine Veterinary Centre",
             result.CompanyAliases["Moore Equine Veterinary Centre - AR"]);
+        Assert.Equal("Dell", result.ManufacturerAliases["Dell Inc."]);
+    }
+
+    [Fact]
+    public async Task LoadManualSyncSettingsAsync_UsesComputerFieldAsFallbackForSplitCategoryConfig()
+    {
+        var filePath = CreateTempFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        await File.WriteAllTextAsync(
+            filePath,
+            """
+            {
+              "Mapping": {
+                "DefaultComputerCategoryName": "Legacy Computer",
+                "DefaultServerCategoryName": "Legacy Server"
+              }
+            }
+            """);
+        var store = new LocalAppSettingsStore(filePath);
+
+        var result = await store.LoadManualSyncSettingsAsync(CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal("Legacy Computer", result.DefaultCategoryName);
+    }
+
+    [Fact]
+    public async Task SaveManualSyncSettingsAsync_SavesIgnoredMacAddresses()
+    {
+        var filePath = CreateTempFilePath();
+        var store = new LocalAppSettingsStore(filePath);
+
+        await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
+
+        var root = JsonNode.Parse(await File.ReadAllTextAsync(filePath))!.AsObject();
+        Assert.Equal(
+            ["00:09:0F:AA:00:01", "00:09:0F:FE:00:01"],
+            root["SnipeIt"]!["IgnoredMacAddresses"]!.AsArray().Select(item => item!.GetValue<string>()));
     }
 
     [Fact]
@@ -158,6 +209,30 @@ public sealed class LocalAppSettingsStoreTests
         Assert.True(root["Notifications"]!["Enabled"]!.GetValue<bool>());
         Assert.Equal(30, root["Sync"]!["IntervalMinutes"]!.GetValue<int>());
         Assert.Equal("atera-key", root["Atera"]!["ApiKey"]!.GetValue<string>());
+        Assert.Equal("snipe-token", root["SnipeIt"]!["ApiToken"]!.GetValue<string>());
+
+    }
+
+    [Fact]
+    public async Task LoadWorkerSyncSettingsAsync_RejectsLegacyPlaintextSecrets_WithoutChangingFile()
+    {
+        var filePath = CreateTempFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        const string json =
+            """
+            {
+              "Atera": { "ApiKey": "legacy-key", "BaseUrl": "https://app.atera.com/api/v3" },
+              "SnipeIt": { "ApiToken": "legacy-token", "BaseUrl": "https://snipe.example.com/api/v1" }
+            }
+            """;
+        await File.WriteAllTextAsync(filePath, json);
+        var store = new LocalAppSettingsStore(filePath);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.LoadWorkerSyncSettingsAsync(CancellationToken.None));
+
+        Assert.Contains("refuses plaintext", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(json, await File.ReadAllTextAsync(filePath));
     }
 
     [Fact]
@@ -168,6 +243,50 @@ public sealed class LocalAppSettingsStoreTests
         await Assert.ThrowsAsync<ArgumentException>(
             () => store.SaveManualSyncSettingsAsync(
                 CreateManualSyncSettings(snipeItApiToken: " "),
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenNormalizeCategoriesAreEmpty()
+    {
+        var store = new LocalAppSettingsStore(CreateTempFilePath());
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.SaveManualSyncSettingsAsync(
+                CreateManualSyncSettings(modelCategoriesToNormalize: []),
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenIgnoredMacIsInvalid()
+    {
+        var store = new LocalAppSettingsStore(CreateTempFilePath());
+        var settings = CreateManualSyncSettings();
+
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.SaveManualSyncSettingsAsync(
+                new ManualSyncSettings
+                {
+                    AteraBaseUrl = settings.AteraBaseUrl,
+                    AteraApiKey = settings.AteraApiKey,
+                    SnipeItBaseUrl = settings.SnipeItBaseUrl,
+                    SnipeItApiToken = settings.SnipeItApiToken,
+                    DefaultCompanyName = settings.DefaultCompanyName,
+                    DefaultManufacturerName = settings.DefaultManufacturerName,
+                    DefaultModelName = settings.DefaultModelName,
+                    DefaultCategoryName = settings.DefaultCategoryName,
+                    ModelCategoriesToNormalize = settings.ModelCategoriesToNormalize,
+                    DefaultStatusId = settings.DefaultStatusId,
+                    CompanyAliases = settings.CompanyAliases,
+                    ManufacturerAliases = settings.ManufacturerAliases,
+                    IgnoredDeviceTypes = settings.IgnoredDeviceTypes,
+                    MacAddressFieldsetName = settings.MacAddressFieldsetName,
+                    MacAddressCustomFieldDbColumnName = settings.MacAddressCustomFieldDbColumnName,
+                    IgnoredMacAddresses = ["not-a-mac"],
+                    NameMatchThreshold = settings.NameMatchThreshold,
+                    CreateMissingCompanies = settings.CreateMissingCompanies,
+                    CreateMissingModels = settings.CreateMissingModels
+                },
                 CancellationToken.None));
     }
 
@@ -290,7 +409,9 @@ public sealed class LocalAppSettingsStoreTests
         };
     }
 
-    private static ManualSyncSettings CreateManualSyncSettings(string? snipeItApiToken = "snipe-token")
+    private static ManualSyncSettings CreateManualSyncSettings(
+        string? snipeItApiToken = "snipe-token",
+        IReadOnlyList<string>? modelCategoriesToNormalize = null)
     {
         return new ManualSyncSettings
         {
@@ -302,12 +423,19 @@ public sealed class LocalAppSettingsStoreTests
             DefaultManufacturerName = " Default Manufacturer ",
             DefaultModelName = " Default Model ",
             DefaultCategoryName = " Computer ",
+            ModelCategoriesToNormalize = modelCategoriesToNormalize ?? [" Server ", " Laptop ", " Desktop "],
             DefaultStatusId = 2,
             CompanyAliases = new Dictionary<string, string>
             {
                 ["Moore Equine Veterinary Centre - AR"] = "Moore Equine Veterinary Centre"
             },
+            ManufacturerAliases = new Dictionary<string, string>
+            {
+                ["Dell Inc."] = "Dell"
+            },
+            MacAddressFieldsetName = " Assets with MAC Address ",
             MacAddressCustomFieldDbColumnName = " _snipeit_mac_address_1 ",
+            IgnoredMacAddresses = [" 00-09-0f-aa-00-01 ", "0009.0faa.0001", "0009.0ffe.0001"],
             NameMatchThreshold = 0.92D,
             CreateMissingCompanies = true,
             CreateMissingModels = false

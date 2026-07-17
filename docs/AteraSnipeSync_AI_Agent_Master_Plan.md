@@ -279,23 +279,23 @@ public sealed class SnipeAssetImportRecord
 
 ### 5.8 Identity Rules
 
-Primary identity:
+Asset tag identity:
 
 ```text
-Serial number
+ATERA-{SourceId}
 ```
 
-Fallback identity:
+SourceId selection:
 
 ```text
-ATERA-{AgentID}
+AgentID, otherwise a valid serial fallback
 ```
 
 ### 5.9 必须支持
 
 ```text
-- serial 优先匹配规则
-- fallback asset tag 生成
+- ATERA-{SourceId} asset tag 生成
+- reliable serial / MAC 辅助匹配规则
 - missing company fallback
 - missing manufacturer fallback
 - missing model fallback
@@ -956,8 +956,8 @@ Tray App 可以编辑 local config。
 验收：
 
 ```text
-- serial 优先
-- missing serial 时生成 ATERA-{AgentID}
+- 所有 asset tag 使用 ATERA-{SourceId}
+- serial 缺失时仍可使用 Atera AgentID 生成 SourceId
 - missing company/model/manufacturer 有 fallback
 - unit tests pass
 ```
@@ -1394,6 +1394,27 @@ Inventory Import Target
 ```
 
 第一版只做 scheduled run。
+
+---
+
+### 16.6 Health Check / Data Integrity 扩展
+
+未来增加独立的只读 Health Check 模块，在 Preview、Sync 或 scheduled run 之前，也可以由操作员单独运行。
+
+初始检测范围：
+
+```text
+- 相同 normalized name + category、但 id 不同的重复 model
+- 相同 normalized name + asset type、但 id 不同的重复 category
+- 疑似重复的 company 和 manufacturer
+- 重复或映射不明确的 custom field（包括 MAC address）
+- model 与 category/manufacturer 之间无效或可疑的关联
+- asset tag、serial、MAC 等重复 source identity
+```
+
+模块只输出结构化 finding、风险等级、受影响记录 id、证据和人工处理建议；不得自动 merge、delete、rename 或修复 Snipe-IT 数据。单个 key 的异常不得让无关健康记录或整个扫描失效。
+
+此模块目前属于 backlog，不计入第一版完成标准。详细范围、安全边界和进入开发前的文档要求记录在 `ROADMAP.md`。
 
 ---
 

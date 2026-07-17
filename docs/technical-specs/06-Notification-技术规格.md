@@ -458,3 +458,15 @@ Implementation is accepted when:
 - cancellation propagates as `OperationCanceledException`
 - notification messages do not persist or log secrets/raw payloads
 - `progress.md` is updated in the same work session as any production code or automated test changes
+
+## 14. 2026-07 Scheduler 通知集成
+
+`SyncScheduler` constructor 新增 `NotificationConfig notificationConfig` 与 `NotificationEventFilter notificationEventFilter`。单次 run 后执行：
+
+```csharp
+var request = NotificationRequestFactory.CreateForSyncResult(result, "scheduled");
+if (_notificationEventFilter.ShouldPublish(_notificationConfig, request))
+    await _notificationPublisher.PublishAsync(request, cancellationToken);
+```
+
+`NotificationRequestFactory` 的 critical code 判定使用 `code.Equals(name)` 或 `code.EndsWith("." + name)`；不得 substring 匹配。publisher 异常由 scheduler 记录，当前 run 返回 false，但后台 loop 继续。

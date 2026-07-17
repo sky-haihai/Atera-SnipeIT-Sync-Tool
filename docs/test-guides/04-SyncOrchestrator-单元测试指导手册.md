@@ -218,3 +218,5 @@ SnipeImportResult.Warnings
 - per-stage timing deterministic tests
 
 这些测试仍应使用 fake dependencies，不调用真实 API。
+
+`RunOnceAsync_AppliesSyncDryRunToSnipeOptions` 还必须断言 `IgnoredMacAddresses`、`MacAddressFieldsetName`、`ModelCategoryNormalizationTargetName` 与 `ModelCategoriesToNormalize` 在 orchestrator copy 后保持不变，避免 Preview、真实 Sync 和 scheduled sync 的 Model 准备配置分叉。

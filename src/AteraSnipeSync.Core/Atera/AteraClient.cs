@@ -13,7 +13,6 @@ namespace AteraSnipeSync.Core.Atera;
 /// </summary>
 public sealed class AteraClient : IAteraClient
 {
-    private const int PageSize = 500;
     private const string ApiKeyHeaderName = "X-API-KEY";
     private static readonly JsonSerializerOptions JsonOptions = new();
     private static readonly HashSet<HttpStatusCode> RetryableStatusCodes =
@@ -92,6 +91,12 @@ public sealed class AteraClient : IAteraClient
                     break;
                 }
 
+                if (_options.MaxPages is { } maxPages && page >= maxPages)
+                {
+                    _logger.LogInformation("Stopped Atera pull after {MaxPages} page(s) for a bounded connection probe.", maxPages);
+                    break;
+                }
+
                 page++;
             }
 
@@ -167,7 +172,7 @@ public sealed class AteraClient : IAteraClient
                     {
                         lastTransientError = new HttpRequestException(
                             $"Atera returned retryable HTTP {(int)response.StatusCode}.");
-                        await DelayBeforeRetryAsync(page, attempt, cancellationToken).ConfigureAwait(false);
+                        await DelayBeforeRetryAsync(page, attempt, response, cancellationToken).ConfigureAwait(false);
                         continue;
                     }
 
@@ -203,12 +208,12 @@ public sealed class AteraClient : IAteraClient
             catch (HttpRequestException exception)
             {
                 lastTransientError = exception;
-                await DelayBeforeRetryAsync(page, attempt, cancellationToken).ConfigureAwait(false);
+                await DelayBeforeRetryAsync(page, attempt, response: null, cancellationToken).ConfigureAwait(false);
             }
             catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
             {
                 lastTransientError = exception;
-                await DelayBeforeRetryAsync(page, attempt, cancellationToken).ConfigureAwait(false);
+                await DelayBeforeRetryAsync(page, attempt, response: null, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -228,15 +233,16 @@ public sealed class AteraClient : IAteraClient
 
     private Uri BuildAgentsPageUri(int page)
     {
-        var baseUri = new Uri(_options.BaseUri.AbsoluteUri.TrimEnd('/') + "/");
+        var baseUri = ApiEndpointValidator.ValidateAteraBaseUri(_options.BaseUri.AbsoluteUri);
         var endpoint = new Uri(baseUri, "agents");
-        var query = $"page={page.ToString(CultureInfo.InvariantCulture)}&itemsInPage={PageSize.ToString(CultureInfo.InvariantCulture)}";
+        var query = $"page={page.ToString(CultureInfo.InvariantCulture)}&itemsInPage={_options.ItemsPerPage.ToString(CultureInfo.InvariantCulture)}";
         return new Uri($"{endpoint.AbsoluteUri}?{query}");
     }
 
     private async Task DelayBeforeRetryAsync(
         int page,
         int attempt,
+        HttpResponseMessage? response,
         CancellationToken cancellationToken)
     {
         if (attempt >= _options.MaxRetryAttempts)
@@ -250,7 +256,33 @@ public sealed class AteraClient : IAteraClient
             attempt + 1,
             _options.MaxRetryAttempts);
 
-        await Task.Delay(_options.RetryDelay, cancellationToken).ConfigureAwait(false);
+        var retryAfter = ReadRetryAfter(response);
+        var exponentialMilliseconds = _options.RetryDelay.TotalMilliseconds * Math.Pow(2, attempt);
+        var jitterMilliseconds = _options.RetryDelay > TimeSpan.Zero
+            ? Random.Shared.NextDouble() * Math.Min(250, _options.RetryDelay.TotalMilliseconds)
+            : 0;
+        var delay = retryAfter ?? TimeSpan.FromMilliseconds(exponentialMilliseconds + jitterMilliseconds);
+        if (delay > TimeSpan.Zero)
+        {
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private TimeSpan? ReadRetryAfter(HttpResponseMessage? response)
+    {
+        var retryAfter = response?.Headers.RetryAfter;
+        if (retryAfter?.Delta is { } delta)
+        {
+            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
+        }
+
+        if (retryAfter?.Date is { } date)
+        {
+            var delay = date - _clock.UtcNow;
+            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
+        }
+
+        return null;
     }
 
     private static void ConvertPageAgents(
@@ -525,6 +557,8 @@ public sealed class AteraClient : IAteraClient
             throw new ArgumentException("Atera base URI must be absolute.", nameof(options));
         }
 
+        _ = ApiEndpointValidator.ValidateAteraBaseUri(options.BaseUri.AbsoluteUri);
+
         if (options.MaxRetryAttempts < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Max retry attempts cannot be negative.");
@@ -533,6 +567,16 @@ public sealed class AteraClient : IAteraClient
         if (options.RetryDelay < TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Retry delay cannot be negative.");
+        }
+
+        if (options.ItemsPerPage is < 1 or > 500)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Atera items per page must be between 1 and 500.");
+        }
+
+        if (options.MaxPages is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Atera maximum pages must be greater than zero when specified.");
         }
     }
 

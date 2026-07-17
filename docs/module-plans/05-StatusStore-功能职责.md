@@ -341,3 +341,10 @@ Status Store Module 不负责：
 - optional owner-approved history export
 
 这些扩展不得把 API wire behavior、sync orchestration、notification sending 或 UI rendering 混入本模块。
+
+## 13. 2026-07 持久化加固职责
+
+- status/report 必须先写同目录临时文件并原子 replace/move，防止进程中断留下截断 JSON。
+- writer 必须使用进程内 semaphore 与跨进程 lock file 串行化 TrayApp/WorkerService 的 read-modify-write。
+- 保存成功后按可配置最大年龄和最大文件数清理历史 report；清理失败只记录 warning，不破坏本次成功保存。
+- 部分取消的 import result 必须完整保存 `Cancelled`、已执行 actions、failures 和计数，不能只记录“用户取消”。

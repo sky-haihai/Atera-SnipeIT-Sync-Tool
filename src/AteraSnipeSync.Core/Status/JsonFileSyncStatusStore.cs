@@ -25,6 +25,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
     };
 
     private readonly string _historyDirectoryPath;
+    private readonly SyncStatusStoreOptions _options;
     private readonly ILogger<JsonFileSyncStatusStore> _logger;
 
     public JsonFileSyncStatusStore(
@@ -42,6 +43,22 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
         }
 
         _historyDirectoryPath = Path.GetFullPath(options.HistoryDirectoryPath);
+        if (options.HistoryRetentionAge <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "History retention age must be greater than zero.");
+        }
+
+        if (options.MaxHistoryFiles <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Maximum history files must be greater than zero.");
+        }
+
+        if (options.LockTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Status lock timeout must be greater than zero.");
+        }
+
+        _options = options;
         _logger = logger;
     }
 
@@ -60,6 +77,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
         try
         {
             Directory.CreateDirectory(_historyDirectoryPath);
+            await using var fileLock = await AcquireFileLockAsync(cancellationToken).ConfigureAwait(false);
 
             var document = CreateHistoryDocument(result);
             var finalPath = CreateUniqueHistoryFilePath(document.Run.FinishedAtUtc);
@@ -89,6 +107,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
                 "Saved sync history file {HistoryFilePath} with result {SyncResult}.",
                 finalPath,
                 document.Run.Result);
+            TryApplyRetentionPolicy();
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -218,7 +237,8 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
                 StartedAtUtc = startedAtUtc,
                 FinishedAtUtc = finishedAtUtc,
                 DurationMs = durationMs,
-                DryRun = result.ImportResult?.DryRun ?? false
+                DryRun = result.ImportResult?.DryRun ?? false,
+                Cancelled = result.ImportResult?.Cancelled ?? false
             },
             Summary = new SyncHistorySummary
             {
@@ -233,7 +253,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
                 CompaniesUpdated = 0,
                 CompaniesDeleted = 0,
                 ModelsCreated = result.ImportResult?.CreatedModels ?? 0,
-                ModelsUpdated = 0,
+                ModelsUpdated = result.ImportResult?.UpdatedModels ?? 0,
                 ModelsDeleted = 0,
                 CategoriesCreated = result.ImportResult?.CreatedCategories ?? 0,
                 CategoriesUpdated = 0,
@@ -410,6 +430,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
             LastRunFinishedAt = latestDocument.Run.FinishedAtUtc,
             LastSuccessAt = latestSuccessAt,
             DryRun = latestDocument.Run.DryRun,
+            Cancelled = latestDocument.Run.Cancelled,
             Pulled = latestDocument.Summary.Pulled,
             Mapped = latestDocument.Summary.Mapped,
             Created = latestDocument.Summary.AssetsCreated,
@@ -491,6 +512,55 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
             {
                 finalPath = CreateConflictHistoryFilePath(finishedAtUtc);
             }
+        }
+    }
+
+    private async Task<FileStream> AcquireFileLockAsync(CancellationToken cancellationToken)
+    {
+        var lockPath = Path.Combine(_historyDirectoryPath, ".status.lock");
+        var startedAt = DateTimeOffset.UtcNow;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (DateTimeOffset.UtcNow - startedAt < _options.LockTimeout)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
+            }
+
+            if (DateTimeOffset.UtcNow - startedAt >= _options.LockTimeout)
+            {
+                throw new TimeoutException($"Timed out waiting for sync status lock '{lockPath}'.");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes expired and excess reports after a successful save; cleanup failures never invalidate the saved run.
+    /// </summary>
+    private void TryApplyRetentionPolicy()
+    {
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow - _options.HistoryRetentionAge;
+            var files = Directory
+                .EnumerateFiles(_historyDirectoryPath, $"{FileNamePrefix}*{FileNameExtension}", SearchOption.TopDirectoryOnly)
+                .Select(path => new { Path = path, SortTime = GetHistorySortTime(path) })
+                .OrderByDescending(item => item.SortTime)
+                .ToArray();
+
+            foreach (var file in files
+                .Where((item, index) => item.SortTime < cutoff || index >= _options.MaxHistoryFiles))
+            {
+                File.Delete(file.Path);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning(exception, "Failed to apply sync history retention in {HistoryDirectoryPath}.", _historyDirectoryPath);
         }
     }
 

@@ -14,7 +14,9 @@ public sealed class SnipeImportResult
     public required int CreatedCompanies { get; init; }
     public required int CreatedCategories { get; init; }
     public required int CreatedModels { get; init; }
+    public required int UpdatedModels { get; init; }
     public required bool DryRun { get; init; }
+    public bool Cancelled { get; init; }
     public required IReadOnlyList<ImportAction> Actions { get; init; }
     public required IReadOnlyList<ImportFailure> Failures { get; init; }
     public required IReadOnlyList<ModuleWarning> Warnings { get; init; }

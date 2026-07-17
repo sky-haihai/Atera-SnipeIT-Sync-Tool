@@ -281,3 +281,11 @@ Atera Pull Module 不负责：
 - acceptance criteria
 
 在技术规格进入 endpoint、wire DTO、pagination、authentication 和 error semantics 之前，必须再次查阅官方 Atera API 文档并记录依据。
+
+## 13. 2026-07 稳定性加固职责
+
+- Atera API base URL 必须使用 HTTPS，并且生产配置只允许官方 `app.atera.com` 主机，防止 `X-API-KEY` 被发送到任意地址。
+- 读取请求对 `429`、临时网络错误和 `5xx` 执行有上限的指数退避，优先遵守 `Retry-After`，并加入小幅 jitter，认证/授权失败不得重试。
+- `AteraPullOptions` 暴露经官方文档确认的 `itemsInPage`（1..500）和仅供连接探测使用的最大页数；正常同步仍必须遍历全部页面。
+- TrayApp 的连接测试必须用单页、单条记录探测，不得为了验证凭据下载完整 inventory。
+- 每个响应仍必须严格验证官方分页 envelope；无法判断分页状态时整次 pull 失败，不输出部分 inventory。

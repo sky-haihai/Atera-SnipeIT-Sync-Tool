@@ -3,7 +3,7 @@ using AteraSnipeSync.Core.Configuration;
 namespace AteraSnipeSync.TrayApp;
 
 /// <summary>
-/// Provides the first TrayApp settings surface for saving local API credentials.
+/// Provides a focused TrayApp surface for keeping an Atera credential in the local Manual Sync test configuration.
 /// </summary>
 public partial class SettingsForm : Form
 {
@@ -63,7 +63,7 @@ public partial class SettingsForm : Form
             await _settingsStore.SaveAteraApiKeyAsync(
                 ateraApiKeyTextBox.Text,
                 CancellationToken.None).ConfigureAwait(true);
-            statusLabel.Text = "Atera API key saved locally.";
+            statusLabel.Text = $"Atera API key saved to local test configuration: {LocalAppSettingsStore.GetDefaultFilePath()}.";
         }
         catch (Exception exception)
         {

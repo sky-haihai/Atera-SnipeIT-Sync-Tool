@@ -1,13 +1,16 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Collections.Concurrent;
+using AteraSnipeSync.Core.Common;
 using AteraSnipeSync.Core.Scheduling;
+using AteraSnipeSync.Core.SnipeIt;
 
 namespace AteraSnipeSync.Core.Configuration;
 
 /// <summary>
 /// Reads and writes local machine configuration while preserving unrelated appsettings sections.
 /// </summary>
-public sealed class LocalAppSettingsStore
+public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
 {
     public const string DefaultFileName = "appsettings.local.json";
 
@@ -15,6 +18,8 @@ public sealed class LocalAppSettingsStore
     {
         WriteIndented = true
     };
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> WriteGates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(15);
 
     private readonly string _filePath;
 
@@ -71,9 +76,7 @@ public sealed class LocalAppSettingsStore
         }
 
         var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
-        var apiKey = root["Atera"]?["ApiKey"]?.GetValue<string>();
-
-        return string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+        return ReadOptionalString(root["Atera"] as JsonObject, "ApiKey");
     }
 
     /// <summary>
@@ -90,6 +93,8 @@ public sealed class LocalAppSettingsStore
         var ateraSection = root["Atera"] as JsonObject;
         var snipeItSection = root["SnipeIt"] as JsonObject;
         var mappingSection = root["Mapping"] as JsonObject;
+        var defaultCategoryName = ReadOptionalString(mappingSection, "DefaultCategoryName")
+            ?? ReadOptionalString(mappingSection, "DefaultComputerCategoryName");
         var settings = new ManualSyncSettings
         {
             AteraBaseUrl = ReadOptionalString(ateraSection, "BaseUrl"),
@@ -99,10 +104,15 @@ public sealed class LocalAppSettingsStore
             DefaultCompanyName = ReadOptionalString(mappingSection, "DefaultCompanyName"),
             DefaultManufacturerName = ReadOptionalString(mappingSection, "DefaultManufacturerName"),
             DefaultModelName = ReadOptionalString(mappingSection, "DefaultModelName"),
-            DefaultCategoryName = ReadOptionalString(mappingSection, "DefaultCategoryName"),
+            DefaultCategoryName = defaultCategoryName,
+            ModelCategoriesToNormalize = ReadStringArray(snipeItSection, "ModelCategoriesToNormalize"),
             DefaultStatusId = ReadOptionalInt(snipeItSection, "DefaultStatusId"),
             CompanyAliases = ReadStringDictionary(mappingSection, "CompanyAliases"),
+            ManufacturerAliases = ReadStringDictionary(mappingSection, "ManufacturerAliases"),
+            IgnoredDeviceTypes = ReadStringArray(mappingSection, "IgnoredDeviceTypes"),
             MacAddressCustomFieldDbColumnName = ReadOptionalString(snipeItSection, "MacAddressCustomFieldDbColumnName"),
+            MacAddressFieldsetName = ReadOptionalString(snipeItSection, "MacAddressFieldsetName"),
+            IgnoredMacAddresses = ReadStringArray(snipeItSection, "IgnoredMacAddresses"),
             NameMatchThreshold = ReadOptionalDouble(snipeItSection, "NameMatchThreshold"),
             CreateMissingCompanies = ReadOptionalBool(snipeItSection, "CreateMissingCompanies"),
             CreateMissingModels = ReadOptionalBool(snipeItSection, "CreateMissingModels")
@@ -112,11 +122,58 @@ public sealed class LocalAppSettingsStore
     }
 
     /// <summary>
-    /// Saves a trimmed Atera API key to the local config file and keeps all unrelated sections intact.
+    /// Loads unattended settings without accepting or modifying legacy plaintext secrets; credentials must come from environment variables.
     /// </summary>
-    public async Task SaveAteraApiKeyAsync(
-        string apiKey,
-        CancellationToken cancellationToken)
+    public async Task<ManualSyncSettings?> LoadWorkerSyncSettingsAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_filePath))
+        {
+            return null;
+        }
+
+        var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
+        var ateraSection = root["Atera"] as JsonObject;
+        var snipeItSection = root["SnipeIt"] as JsonObject;
+        if (ReadOptionalString(ateraSection, "ApiKey") is not null
+            || ReadOptionalString(snipeItSection, "ApiToken") is not null)
+        {
+            throw new InvalidOperationException(
+                $"WorkerService refuses plaintext API credentials in '{_filePath}'. Save the config from TrayApp to remove them, then set {SecretEnvironmentVariables.AteraApiKey} and {SecretEnvironmentVariables.SnipeItApiToken} for the WorkerService process.");
+        }
+
+        var mappingSection = root["Mapping"] as JsonObject;
+        var defaultCategoryName = ReadOptionalString(mappingSection, "DefaultCategoryName")
+            ?? ReadOptionalString(mappingSection, "DefaultComputerCategoryName");
+        var settings = new ManualSyncSettings
+        {
+            AteraBaseUrl = ReadOptionalString(ateraSection, "BaseUrl"),
+            AteraApiKey = ReadEnvironmentSecret(SecretEnvironmentVariables.AteraApiKey),
+            SnipeItBaseUrl = ReadOptionalString(snipeItSection, "BaseUrl"),
+            SnipeItApiToken = ReadEnvironmentSecret(SecretEnvironmentVariables.SnipeItApiToken),
+            DefaultCompanyName = ReadOptionalString(mappingSection, "DefaultCompanyName"),
+            DefaultManufacturerName = ReadOptionalString(mappingSection, "DefaultManufacturerName"),
+            DefaultModelName = ReadOptionalString(mappingSection, "DefaultModelName"),
+            DefaultCategoryName = defaultCategoryName,
+            ModelCategoriesToNormalize = ReadStringArray(snipeItSection, "ModelCategoriesToNormalize"),
+            DefaultStatusId = ReadOptionalInt(snipeItSection, "DefaultStatusId"),
+            CompanyAliases = ReadStringDictionary(mappingSection, "CompanyAliases"),
+            ManufacturerAliases = ReadStringDictionary(mappingSection, "ManufacturerAliases"),
+            IgnoredDeviceTypes = ReadStringArray(mappingSection, "IgnoredDeviceTypes"),
+            MacAddressCustomFieldDbColumnName = ReadOptionalString(snipeItSection, "MacAddressCustomFieldDbColumnName"),
+            MacAddressFieldsetName = ReadOptionalString(snipeItSection, "MacAddressFieldsetName"),
+            IgnoredMacAddresses = ReadStringArray(snipeItSection, "IgnoredMacAddresses"),
+            NameMatchThreshold = ReadOptionalDouble(snipeItSection, "NameMatchThreshold"),
+            CreateMissingCompanies = ReadOptionalBool(snipeItSection, "CreateMissingCompanies"),
+            CreateMissingModels = ReadOptionalBool(snipeItSection, "CreateMissingModels")
+        };
+
+        return HasAnyManualSyncSetting(settings) ? settings : null;
+    }
+
+    /// <summary>
+    /// Saves an Atera API key to the local Manual Sync test configuration while preserving unrelated sections.
+    /// </summary>
+    public async Task SaveAteraApiKeyAsync(string apiKey, CancellationToken cancellationToken)
     {
         var trimmedApiKey = apiKey?.Trim();
         if (string.IsNullOrWhiteSpace(trimmedApiKey))
@@ -124,19 +181,11 @@ public sealed class LocalAppSettingsStore
             throw new ArgumentException("Atera API key is required.", nameof(apiKey));
         }
 
-        var root = File.Exists(_filePath)
-            ? await LoadRootAsync(cancellationToken).ConfigureAwait(false)
-            : new JsonObject();
-
-        if (root["Atera"] is not JsonObject ateraSection)
+        await UpdateRootAsync(root =>
         {
-            ateraSection = new JsonObject();
-            root["Atera"] = ateraSection;
-        }
-
-        ateraSection["ApiKey"] = trimmedApiKey;
-
-        await SaveRootAsync(root, cancellationToken).ConfigureAwait(false);
+            var ateraSection = GetOrCreateObject(root, "Atera");
+            ateraSection["ApiKey"] = trimmedApiKey;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -160,6 +209,28 @@ public sealed class LocalAppSettingsStore
             ?? throw new ArgumentException("Default status id is required.", nameof(settings));
         var nameMatchThreshold = settings.NameMatchThreshold
             ?? throw new ArgumentException("Name match threshold is required.", nameof(settings));
+        var macCustomFieldDbColumnName = settings.MacAddressCustomFieldDbColumnName?.Trim();
+        var macAddressFieldsetName = settings.MacAddressFieldsetName?.Trim();
+        if (string.IsNullOrWhiteSpace(macCustomFieldDbColumnName)
+            != string.IsNullOrWhiteSpace(macAddressFieldsetName))
+        {
+            throw new ArgumentException(
+                "MAC address custom field DB column and MAC Fieldset name must be configured together.",
+                nameof(settings));
+        }
+
+        var ignoredMacAddresses = NormalizeIgnoredMacAddresses(settings.IgnoredMacAddresses);
+        var modelCategoriesToNormalize = settings.ModelCategoriesToNormalize
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Cast<string>()
+            .ToList();
+        if (modelCategoriesToNormalize.Count == 0)
+        {
+            throw new ArgumentException("At least one model category to normalize is required.", nameof(settings));
+        }
+
         if (defaultStatusId <= 0)
         {
             throw new ArgumentException("Default status id must be greater than zero.", nameof(settings));
@@ -170,31 +241,35 @@ public sealed class LocalAppSettingsStore
             throw new ArgumentException("Name match threshold must be between 0 and 1.", nameof(settings));
         }
 
-        var root = File.Exists(_filePath)
-            ? await LoadRootAsync(cancellationToken).ConfigureAwait(false)
-            : new JsonObject();
+        await UpdateRootAsync(root =>
+        {
+            var ateraSection = GetOrCreateObject(root, "Atera");
+            ateraSection["BaseUrl"] = ateraBaseUrl;
+            ateraSection["ApiKey"] = ateraApiKey;
 
-        var ateraSection = GetOrCreateObject(root, "Atera");
-        ateraSection["BaseUrl"] = ateraBaseUrl;
-        ateraSection["ApiKey"] = ateraApiKey;
+            var snipeItSection = GetOrCreateObject(root, "SnipeIt");
+            snipeItSection["BaseUrl"] = snipeItBaseUrl;
+            snipeItSection["ApiToken"] = snipeItApiToken;
+            snipeItSection["DefaultStatusId"] = defaultStatusId;
+            snipeItSection["ModelCategoriesToNormalize"] = WriteStringArray(modelCategoriesToNormalize);
+            WriteOptionalString(snipeItSection, "MacAddressCustomFieldDbColumnName", macCustomFieldDbColumnName);
+            WriteOptionalString(snipeItSection, "MacAddressFieldsetName", macAddressFieldsetName);
+            snipeItSection["IgnoredMacAddresses"] = WriteStringArray(ignoredMacAddresses);
+            snipeItSection["NameMatchThreshold"] = nameMatchThreshold;
+            snipeItSection["CreateMissingCompanies"] = settings.CreateMissingCompanies ?? false;
+            snipeItSection["CreateMissingModels"] = settings.CreateMissingModels ?? false;
 
-        var snipeItSection = GetOrCreateObject(root, "SnipeIt");
-        snipeItSection["BaseUrl"] = snipeItBaseUrl;
-        snipeItSection["ApiToken"] = snipeItApiToken;
-        snipeItSection["DefaultStatusId"] = defaultStatusId;
-        WriteOptionalString(snipeItSection, "MacAddressCustomFieldDbColumnName", settings.MacAddressCustomFieldDbColumnName);
-        snipeItSection["NameMatchThreshold"] = nameMatchThreshold;
-        snipeItSection["CreateMissingCompanies"] = settings.CreateMissingCompanies ?? false;
-        snipeItSection["CreateMissingModels"] = settings.CreateMissingModels ?? false;
-
-        var mappingSection = GetOrCreateObject(root, "Mapping");
-        mappingSection["DefaultCompanyName"] = defaultCompanyName;
-        mappingSection["DefaultManufacturerName"] = defaultManufacturerName;
-        mappingSection["DefaultModelName"] = defaultModelName;
-        mappingSection["DefaultCategoryName"] = defaultCategoryName;
-        mappingSection["CompanyAliases"] = WriteStringDictionary(settings.CompanyAliases);
-
-        await SaveRootAsync(root, cancellationToken).ConfigureAwait(false);
+            var mappingSection = GetOrCreateObject(root, "Mapping");
+            mappingSection["DefaultCompanyName"] = defaultCompanyName;
+            mappingSection["DefaultManufacturerName"] = defaultManufacturerName;
+            mappingSection["DefaultModelName"] = defaultModelName;
+            mappingSection["DefaultCategoryName"] = defaultCategoryName;
+            mappingSection.Remove("DefaultComputerCategoryName");
+            mappingSection.Remove("DefaultServerCategoryName");
+            mappingSection["CompanyAliases"] = WriteStringDictionary(settings.CompanyAliases);
+            mappingSection["ManufacturerAliases"] = WriteStringDictionary(settings.ManufacturerAliases);
+            mappingSection["IgnoredDeviceTypes"] = WriteStringArray(settings.IgnoredDeviceTypes);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -217,6 +292,45 @@ public sealed class LocalAppSettingsStore
     }
 
     /// <summary>
+    /// Loads whether unattended runs are dry-run, defaulting to the fail-safe value true.
+    /// </summary>
+    public async Task<bool> LoadSyncDryRunAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_filePath))
+        {
+            return true;
+        }
+
+        var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
+        return root["Sync"]?["DryRun"]?.GetValue<bool>() ?? true;
+    }
+
+    /// <summary>
+    /// Loads notification enablement and subscriptions, defaulting to a disabled publisher configuration.
+    /// </summary>
+    public async Task<NotificationConfig> LoadNotificationConfigAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_filePath))
+        {
+            return DisabledNotifications();
+        }
+
+        var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
+        if (root["Notifications"] is not JsonObject section)
+        {
+            return DisabledNotifications();
+        }
+
+        return new NotificationConfig
+        {
+            Enabled = ReadOptionalBool(section, "Enabled") ?? false,
+            OnEvents = ReadStringArray(section, "OnEvents"),
+            EmailTo = ReadOptionalString(section, "EmailTo"),
+            WebhookUrl = ReadOptionalString(section, "WebhookUrl")
+        };
+    }
+
+    /// <summary>
     /// Saves a validated unattended sync schedule under Sync.Schedule while preserving unrelated settings.
     /// </summary>
     public async Task SaveSyncScheduleOptionsAsync(
@@ -225,19 +339,11 @@ public sealed class LocalAppSettingsStore
     {
         ScheduleCalculator.Validate(scheduleOptions);
 
-        var root = File.Exists(_filePath)
-            ? await LoadRootAsync(cancellationToken).ConfigureAwait(false)
-            : new JsonObject();
-
-        if (root["Sync"] is not JsonObject syncSection)
+        await UpdateRootAsync(root =>
         {
-            syncSection = new JsonObject();
-            root["Sync"] = syncSection;
-        }
-
-        syncSection["Schedule"] = WriteScheduleOptions(scheduleOptions);
-
-        await SaveRootAsync(root, cancellationToken).ConfigureAwait(false);
+            var syncSection = GetOrCreateObject(root, "Sync");
+            syncSection["Schedule"] = WriteScheduleOptions(scheduleOptions);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<JsonObject> LoadRootAsync(CancellationToken cancellationToken)
@@ -265,8 +371,63 @@ public sealed class LocalAppSettingsStore
         }
 
         var json = root.ToJsonString(WriteOptions);
-        await File.WriteAllTextAsync(_filePath, json, cancellationToken).ConfigureAwait(false);
+        await AtomicFileWriter.WriteAllTextAsync(_filePath, json, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task UpdateRootAsync(Action<JsonObject> update, CancellationToken cancellationToken)
+    {
+        var gate = WriteGates.GetOrAdd(Path.GetFullPath(_filePath), static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var fileLock = await AcquireFileLockAsync(cancellationToken).ConfigureAwait(false);
+            var root = File.Exists(_filePath)
+                ? await LoadRootAsync(cancellationToken).ConfigureAwait(false)
+                : new JsonObject();
+            update(root);
+            await SaveRootAsync(root, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<FileStream> AcquireFileLockAsync(CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(_filePath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var lockPath = _filePath + ".lock";
+        var startedAt = DateTimeOffset.UtcNow;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (DateTimeOffset.UtcNow - startedAt < LockTimeout)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
+            }
+
+            if (DateTimeOffset.UtcNow - startedAt >= LockTimeout)
+            {
+                throw new TimeoutException($"Timed out waiting for local settings lock '{lockPath}'.");
+            }
+        }
+    }
+
+    private static string? ReadEnvironmentSecret(string variableName)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process)?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
 
     private static JsonObject GetOrCreateObject(JsonObject root, string propertyName)
     {
@@ -330,6 +491,26 @@ public sealed class LocalAppSettingsStore
         return values;
     }
 
+    private static IReadOnlyList<string> ReadStringArray(JsonObject? section, string propertyName)
+    {
+        if (section?[propertyName] is not JsonArray array)
+        {
+            return [];
+        }
+
+        var values = new List<string>();
+        foreach (var item in array)
+        {
+            var value = item?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                values.Add(value);
+            }
+        }
+
+        return values;
+    }
+
     private static void WriteOptionalString(JsonObject section, string propertyName, string? value)
     {
         var trimmedValue = value?.Trim();
@@ -355,6 +536,39 @@ public sealed class LocalAppSettingsStore
         return dictionaryObject;
     }
 
+    private static JsonArray WriteStringArray(IReadOnlyList<string> values)
+    {
+        return new JsonArray(values
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => JsonValue.Create(value))
+            .ToArray<JsonNode?>());
+    }
+
+    /// <summary>
+    /// Validates persisted ignored MAC values and stores one deterministic display-form entry per address.
+    /// </summary>
+    private static IReadOnlyList<string> NormalizeIgnoredMacAddresses(IReadOnlyList<string> values)
+    {
+        var normalizedValues = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var value in values)
+        {
+            var comparable = MacAddressNormalizer.NormalizeComparable(value);
+            if (comparable is null)
+            {
+                throw new ArgumentException($"Ignored MAC address '{value}' is invalid.", nameof(values));
+            }
+
+            if (seen.Add(comparable))
+            {
+                normalizedValues.Add(MacAddressNormalizer.NormalizeDisplay(comparable)!);
+            }
+        }
+
+        return normalizedValues;
+    }
+
     private static bool HasAnyManualSyncSetting(ManualSyncSettings settings)
     {
         return !string.IsNullOrWhiteSpace(settings.AteraBaseUrl)
@@ -365,9 +579,14 @@ public sealed class LocalAppSettingsStore
             || !string.IsNullOrWhiteSpace(settings.DefaultManufacturerName)
             || !string.IsNullOrWhiteSpace(settings.DefaultModelName)
             || !string.IsNullOrWhiteSpace(settings.DefaultCategoryName)
+            || settings.ModelCategoriesToNormalize.Count > 0
             || settings.DefaultStatusId.HasValue
             || settings.CompanyAliases.Count > 0
+            || settings.ManufacturerAliases.Count > 0
+            || settings.IgnoredDeviceTypes.Count > 0
             || !string.IsNullOrWhiteSpace(settings.MacAddressCustomFieldDbColumnName)
+            || !string.IsNullOrWhiteSpace(settings.MacAddressFieldsetName)
+            || settings.IgnoredMacAddresses.Count > 0
             || settings.NameMatchThreshold.HasValue
             || settings.CreateMissingCompanies.HasValue
             || settings.CreateMissingModels.HasValue;
@@ -386,6 +605,11 @@ public sealed class LocalAppSettingsStore
             RunOnLastDayOfMonth = scheduleSection["RunOnLastDayOfMonth"]?.GetValue<bool>() ?? false,
             PreventOverlappingRuns = scheduleSection["PreventOverlappingRuns"]?.GetValue<bool>() ?? true
         };
+    }
+
+    private static NotificationConfig DisabledNotifications()
+    {
+        return new NotificationConfig { Enabled = false, OnEvents = [] };
     }
 
     private static JsonObject WriteScheduleOptions(SyncScheduleOptions scheduleOptions)

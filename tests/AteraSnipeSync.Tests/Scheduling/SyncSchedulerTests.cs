@@ -76,7 +76,7 @@ public sealed class SyncSchedulerTests
                 DefaultCompanyName = "Acme",
                 DefaultManufacturerName = "Dell",
                 DefaultModelName = "Latitude",
-                DefaultCategoryName = "Laptop",
+                DefaultCategoryName = "Computer",
                 DefaultStatusId = 2
             },
             SnipeIt = new SnipeImportOptions

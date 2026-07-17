@@ -134,6 +134,7 @@ public sealed class ContractCompilationTests
                 CreatedCompanies = 0,
                 CreatedCategories = 0,
                 CreatedModels = 0,
+                UpdatedModels = 0,
                 DryRun = options.DryRun,
                 Actions = [],
                 Failures = [],

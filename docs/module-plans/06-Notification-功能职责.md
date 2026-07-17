@@ -243,3 +243,10 @@ Notification Module 不负责：
 - local notification audit history
 
 这些扩展必须继续使用结构化 `NotificationRequest`，不得让 Sync Orchestrator 或 Worker Scheduler 了解具体 sender 的协议细节。
+
+## 12. 2026-07 通知判定加固职责
+
+- Scheduler 必须通过 `NotificationRequestFactory` 生成实际 `ScheduledSyncCompleted` 或 `ScheduledSyncFailed`，不得把失败写成 completed。
+- Scheduler 必须先使用 `NotificationEventFilter` 和 `NotificationConfig` 判定是否发送；disabled 或 event 未订阅时不得调用 publisher。
+- critical failure 匹配使用稳定的限定 failure code，并兼容 namespace 前缀（例如 `SnipeImport.AuthenticationFailed`）。
+- notification publisher 异常不得终止后续 schedule loop；必须被记录并作为本次调度执行失败处理。

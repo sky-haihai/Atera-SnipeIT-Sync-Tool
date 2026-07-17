@@ -559,6 +559,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
             CreatedCompanies = createdCompanies,
             CreatedCategories = createdCategories,
             CreatedModels = createdModels,
+            UpdatedModels = 0,
             DryRun = dryRun,
             Actions = actions ?? [],
             Failures = importFailures ?? [],

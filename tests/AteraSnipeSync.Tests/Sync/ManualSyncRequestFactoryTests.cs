@@ -21,7 +21,11 @@ public sealed class ManualSyncRequestFactoryTests
         Assert.False(request.SnipeIt.ManualPreflightCsvEnabled);
         Assert.Null(request.SnipeIt.ManualPreflightCsvDirectory);
         Assert.Equal("https://snipe.example.com/api/v1", request.SnipeIt.BaseUrl);
+        Assert.Equal("Assets with MAC Address", request.SnipeIt.MacAddressFieldsetName);
         Assert.Equal("_snipeit_mac_address_5", request.SnipeIt.MacAddressCustomFieldDbColumnName);
+        Assert.Equal("Computer", request.SnipeIt.ModelCategoryNormalizationTargetName);
+        Assert.Equal(["Server", "Laptop", "Desktop"], request.SnipeIt.ModelCategoriesToNormalize);
+        Assert.Equal(["00:09:0F:AA:00:01"], request.SnipeIt.IgnoredMacAddresses);
     }
 
     [Fact]
@@ -36,6 +40,7 @@ public sealed class ManualSyncRequestFactoryTests
         Assert.True(request.SnipeIt.DryRun);
         Assert.True(request.SnipeIt.ManualPreflightCsvEnabled);
         Assert.Equal(@"C:\ProgramData\AteraSnipeSync\Preflight\run-1", request.SnipeIt.ManualPreflightCsvDirectory);
+        Assert.Equal(["00:09:0F:AA:00:01"], request.SnipeIt.IgnoredMacAddresses);
     }
 
     [Fact]
@@ -55,7 +60,7 @@ public sealed class ManualSyncRequestFactoryTests
                 DefaultCompanyName = "Acme",
                 DefaultManufacturerName = "Dell",
                 DefaultModelName = "Latitude",
-                DefaultCategoryName = "Laptop",
+                DefaultCategoryName = "Computer",
                 DefaultStatusId = 2
             },
             SnipeIt = new SnipeImportOptions
@@ -65,7 +70,11 @@ public sealed class ManualSyncRequestFactoryTests
                 DryRun = true,
                 CreateMissingCompanies = true,
                 CreateMissingModels = true,
+                MacAddressFieldsetName = "Assets with MAC Address",
                 MacAddressCustomFieldDbColumnName = "_snipeit_mac_address_5",
+                ModelCategoryNormalizationTargetName = "Computer",
+                ModelCategoriesToNormalize = ["Server", "Laptop", "Desktop"],
+                IgnoredMacAddresses = ["00:09:0F:AA:00:01"],
                 NameMatchThreshold = 0.93,
                 ManualPreflightCsvEnabled = true,
                 ManualPreflightCsvDirectory = @"C:\ProgramData\AteraSnipeSync\Preflight\old-run"

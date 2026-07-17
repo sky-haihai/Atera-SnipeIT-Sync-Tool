@@ -198,6 +198,12 @@ public sealed class SyncOrchestratorTests
         Assert.Equal(request.SnipeIt.BaseUrl, importer.LastOptions.BaseUrl);
         Assert.Equal(request.SnipeIt.ApiToken, importer.LastOptions.ApiToken);
         Assert.Equal(request.SnipeIt.ManualPreflightCsvDirectory, importer.LastOptions.ManualPreflightCsvDirectory);
+        Assert.Equal(request.SnipeIt.MacAddressFieldsetName, importer.LastOptions.MacAddressFieldsetName);
+        Assert.Equal(
+            request.SnipeIt.ModelCategoryNormalizationTargetName,
+            importer.LastOptions.ModelCategoryNormalizationTargetName);
+        Assert.Equal(request.SnipeIt.ModelCategoriesToNormalize, importer.LastOptions.ModelCategoriesToNormalize);
+        Assert.Equal(request.SnipeIt.IgnoredMacAddresses, importer.LastOptions.IgnoredMacAddresses);
     }
 
     [Fact]
@@ -276,7 +282,7 @@ public sealed class SyncOrchestratorTests
                 DefaultCompanyName = "Acme",
                 DefaultManufacturerName = "Dell",
                 DefaultModelName = "Latitude",
-                DefaultCategoryName = "Laptop",
+                DefaultCategoryName = "Computer",
                 DefaultStatusId = 2
             },
             SnipeIt = new SnipeImportOptions
@@ -286,7 +292,11 @@ public sealed class SyncOrchestratorTests
                 DryRun = snipeDryRun,
                 CreateMissingCompanies = true,
                 CreateMissingModels = true,
+                MacAddressFieldsetName = "Assets with MAC Address",
                 MacAddressCustomFieldDbColumnName = "_snipeit_mac_address_5",
+                ModelCategoryNormalizationTargetName = "Computer",
+                ModelCategoriesToNormalize = ["Server", "Laptop", "Desktop"],
+                IgnoredMacAddresses = ["00:09:0F:AA:00:01"],
                 NameMatchThreshold = 0.93,
                 ManualPreflightCsvEnabled = true,
                 ManualPreflightCsvDirectory = @"C:\ProgramData\AteraSnipeSync\Preflight\run-1"
@@ -365,6 +375,7 @@ public sealed class SyncOrchestratorTests
             CreatedCompanies = 0,
             CreatedCategories = 0,
             CreatedModels = 0,
+            UpdatedModels = 0,
             DryRun = true,
             Actions = [],
             Failures = failures ?? [],

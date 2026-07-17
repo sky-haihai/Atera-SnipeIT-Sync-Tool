@@ -19,6 +19,10 @@ public sealed class ScheduledSyncRequestFactoryTests
         Assert.Equal("scheduled", request.Sync.TriggeredBy);
         Assert.False(request.SnipeIt.ManualPreflightCsvEnabled);
         Assert.Null(request.SnipeIt.ManualPreflightCsvDirectory);
+        Assert.Equal("Assets with MAC Address", request.SnipeIt.MacAddressFieldsetName);
+        Assert.Equal("Computer", request.SnipeIt.ModelCategoryNormalizationTargetName);
+        Assert.Equal(["Server", "Laptop", "Desktop"], request.SnipeIt.ModelCategoriesToNormalize);
+        Assert.Equal(["00:09:0F:AA:00:01"], request.SnipeIt.IgnoredMacAddresses);
     }
 
     private static SyncRunRequest CreateBaseRequest()
@@ -31,7 +35,7 @@ public sealed class ScheduledSyncRequestFactoryTests
                 DefaultCompanyName = "Acme",
                 DefaultManufacturerName = "Dell",
                 DefaultModelName = "Latitude",
-                DefaultCategoryName = "Laptop",
+                DefaultCategoryName = "Computer",
                 DefaultStatusId = 2
             },
             SnipeIt = new SnipeImportOptions
@@ -41,6 +45,10 @@ public sealed class ScheduledSyncRequestFactoryTests
                 DryRun = false,
                 CreateMissingCompanies = true,
                 CreateMissingModels = true,
+                MacAddressFieldsetName = "Assets with MAC Address",
+                ModelCategoryNormalizationTargetName = "Computer",
+                ModelCategoriesToNormalize = ["Server", "Laptop", "Desktop"],
+                IgnoredMacAddresses = ["00:09:0F:AA:00:01"],
                 ManualPreflightCsvEnabled = true,
                 ManualPreflightCsvDirectory = @"C:\ProgramData\AteraSnipeSync\Preflight\run-1"
             },

@@ -752,3 +752,15 @@ Implementation is accepted when:
 - missing/empty/malformed history does not crash `ReadLatestAsync`
 - no secrets or raw API payloads are persisted
 - `progress.md` is updated in the same work session as code/tests
+
+## 16. 2026-07 原子写入与保留策略
+
+`SyncStatusStoreOptions` 新增：
+
+```csharp
+public TimeSpan HistoryRetentionAge { get; init; } = TimeSpan.FromDays(90);
+public int MaxHistoryFiles { get; init; } = 500;
+public TimeSpan LockTimeout { get; init; } = TimeSpan.FromSeconds(15);
+```
+
+新增 `internal static class AtomicFileWriter`，`WriteAllTextAsync(path, contents, token)` 先写 `{path}.{guid}.tmp`，flush 后同卷 `File.Move(temp, path, true)`，finally 清理 temp。`JsonFileSyncStatusStore` 在现有 semaphore 外获取 `<status-root>/.status.lock` 的 exclusive `FileStream(FileShare.None)`；timeout 抛 `TimeoutException`。保存 report/latest 成功后按 last-write UTC 删除超龄文件，再保留最新 `MaxHistoryFiles` 个。锁与清理都必须有单元测试。

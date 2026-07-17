@@ -79,6 +79,8 @@ public interface ISyncOrchestrator
 
 本模块必须确保 `SyncRunOptions.DryRun` 控制传给 Snipe Import Module 的 `SnipeImportOptions.DryRun`。即使调用方传入的 `request.SnipeIt.DryRun` 与 `request.Sync.DryRun` 不一致，本模块也应以 `request.Sync.DryRun` 作为一次 sync run 的顶层 dry-run 意图。
 
+复制 run-level options 时必须完整保留 `IgnoredMacAddresses`，使 Preview 和真实 Sync 使用相同的 MAC 身份过滤集合。
+
 ## 7. 失败条件
 
 ### 7.1 Atera Pull 失败
@@ -181,3 +183,10 @@ Sync Orchestrator Module 不负责：
 - optional status snapshot construction
 
 这些扩展不得把 API wire behavior、UI behavior 或持久化职责混入本模块。
+
+## 12. 2026-07 聚合与失败代码加固职责
+
+- warnings 必须按 `Source + Code + Message` 去重，并保证 pull、mapping、import 各阶段只聚合一次。
+- `AteraPullException` 必须按其 `FailureKind` 转换为稳定的 run failure code（例如 `AteraPull.AuthenticationFailed`），不能统一降级为异常类型名。
+- Snipe Import 在真实写入后被取消时会返回部分失败结果；Orchestrator 必须保留该 import result 并输出失败 run，供 status/report 审计。
+- 首次写入前的用户取消仍直接向调用者传播，不伪造成普通失败。

@@ -59,7 +59,7 @@ public sealed class ReconstructionBoundaryTests
         Assert.Equal(2, batch.Assets.Count);
 
         var serialBackedAsset = batch.Assets[0];
-        Assert.Equal("ABC123", serialBackedAsset.AssetTag);
+        Assert.Equal("ATERA-12345", serialBackedAsset.AssetTag);
         Assert.Equal("ABC123", serialBackedAsset.Serial);
         Assert.Equal("LAPTOP-001", serialBackedAsset.Name);
         Assert.Equal("Acme Support", serialBackedAsset.CompanyName);

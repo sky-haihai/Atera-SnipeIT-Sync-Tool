@@ -213,6 +213,7 @@ public sealed class NotificationRequestFactoryTests
                 CreatedCompanies = 0,
                 CreatedCategories = 0,
                 CreatedModels = 0,
+                UpdatedModels = 0,
                 DryRun = true,
                 Actions = [],
                 Failures = [],

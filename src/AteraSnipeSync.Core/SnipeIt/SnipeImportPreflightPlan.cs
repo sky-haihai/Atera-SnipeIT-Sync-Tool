@@ -19,14 +19,19 @@ internal sealed record SnipeAssetPreflightRow(
     string AssetTag,
     string Name,
     string? Serial,
+    string MacAddresses,
     string CompanyName,
     string ModelName,
     string CategoryName,
     string ManufacturerName,
     int? ExistingAssetId,
     string? ExistingAssetTag,
+    string? ConflictingFields,
+    string? ConflictingValue,
+    string? ConflictingAssets,
     string? FailureCode,
-    string? FailureMessage);
+    string? FailureMessage,
+    string? DeviceType);
 
 /// <summary>
 /// Describes one planned company create row for the company preflight CSV.
@@ -44,12 +49,20 @@ internal sealed record SnipeCategoryPreflightRow(
     string CategoryType);
 
 /// <summary>
-/// Describes one planned model create row for the model preflight CSV.
+/// Describes one planned model create or update row for the model preflight CSV.
 /// </summary>
 internal sealed record SnipeModelPreflightRow(
     string Operation,
     string Name,
-    string CategoryName,
-    int? CategoryId,
+    int? ExistingModelId,
+    string? CurrentCategoryName,
+    int? CurrentCategoryId,
+    string TargetCategoryName,
+    int? TargetCategoryId,
     string ManufacturerName,
-    int? ManufacturerId);
+    int? ManufacturerId,
+    string? CurrentFieldsetName,
+    int? CurrentFieldsetId,
+    string? TargetFieldsetName,
+    int? TargetFieldsetId,
+    string ChangeReasons);

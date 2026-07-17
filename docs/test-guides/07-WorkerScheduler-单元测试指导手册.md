@@ -71,7 +71,22 @@ dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "F
 
 - verifies a second scheduled trigger is skipped while the previous run is still active
 
-## 5. Mocking Strategy
+## 5. Computer/Server Category 配置验证
+
+运行：
+
+```powershell
+dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~LocalAppSettingsStoreTests|FullyQualifiedName~ScheduledSyncRequestFactoryTests|FullyQualifiedName~SyncSchedulerTests"
+```
+
+验证点：
+
+- 保存后的 Mapping JSON 只使用 `DefaultCategoryName`，并移除短期存在过的 `DefaultComputerCategoryName` 与 `DefaultServerCategoryName`。
+- `LoadManualSyncSettingsAsync_UsesComputerFieldAsFallbackForSplitCategoryConfig` 验证双字段配置回退为单一 Computer 值，Server 字段不参与 runtime。
+- Worker composition 对单一 category 执行必填校验；scheduled request 保留原 `MappingOptions.DefaultCategoryName`。
+- 测试只使用临时配置文件与 fake scheduler dependencies，不访问真实 API。
+
+## 6. Mocking Strategy
 
 Scheduler tests use fake in-memory implementations of:
 
@@ -80,3 +95,7 @@ Scheduler tests use fake in-memory implementations of:
 - `INotificationPublisher`
 
 Tests must not call real Atera or Snipe-IT APIs. Scheduled request tests assert the request shape passed to the orchestrator instead of executing network work.
+
+`CreateScheduledRequest_ForcesScheduledTriggerAndDisablesManualPreflightCsv` 同时断言 `IgnoredMacAddresses`、`MacAddressFieldsetName`、`ModelCategoryNormalizationTargetName` 与 `ModelCategoriesToNormalize` 被保留，确保 scheduled run 与 Manual Sync 使用相同的 Model 准备和过滤配置。
+
+`WorkerRuntimeFactory` 的 solution build 必须验证 `ManualSyncSettings.ManufacturerAliases` 能传入 `MappingOptions.ManufacturerAliases`。该配置不进入 Snipe API options；自动测试不访问真实 API。

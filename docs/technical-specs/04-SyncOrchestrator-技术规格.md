@@ -130,6 +130,7 @@ The returned options must preserve:
 - `CreateMissingCompanies`
 - `CreateMissingModels`
 - `MacAddressCustomFieldDbColumnName`
+- `IgnoredMacAddresses`
 - `NameMatchThreshold`
 - `ManualPreflightCsvEnabled`
 - `ManualPreflightCsvDirectory`
@@ -293,3 +294,11 @@ Tests must not call real Atera or Snipe-IT APIs.
 - warnings are aggregated in pull -> mapping -> import order
 - dry-run follows `SyncRunOptions.DryRun`
 - cancellation is not swallowed
+
+## 13. 2026-07 聚合设计
+
+`SyncOrchestrator` 使用私有 `AddWarningsDistinct`，key 为 ordinal-ignore-case 的 `Source\u001fCode\u001fMessage`，保持首次出现顺序。Importer 不再复制 `SnipeImportBatch.Warnings`。
+
+`ToStageFailure` 对 `AteraPullException` 生成 `Code = $"AteraPull.{exception.FailureKind}"`；其它异常仍使用安全类型名。`SnipeImportResult.Cancelled=true` 时保留 result 并按其 failures 返回 `Success=false`。
+
+新增测试验证 warning 只出现一次、Atera authentication code 保留，以及部分取消 import result 可进入 run result。

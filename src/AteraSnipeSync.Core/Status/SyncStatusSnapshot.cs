@@ -11,6 +11,7 @@ public sealed class SyncStatusSnapshot
     public required DateTimeOffset? LastRunFinishedAt { get; init; }
     public required DateTimeOffset? LastSuccessAt { get; init; }
     public required bool DryRun { get; init; }
+    public bool Cancelled { get; init; }
     public required int Pulled { get; init; }
     public required int Mapped { get; init; }
     public required int Created { get; init; }

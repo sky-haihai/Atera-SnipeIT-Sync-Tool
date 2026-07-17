@@ -1,4 +1,5 @@
 using AteraSnipeSync.Core.Notifications;
+using AteraSnipeSync.Core.Configuration;
 using AteraSnipeSync.Core.Status;
 using AteraSnipeSync.Core.Sync;
 using Microsoft.Extensions.Logging;
@@ -13,6 +14,8 @@ public sealed class SyncScheduler : ISyncScheduler
     private readonly ISyncOrchestrator _orchestrator;
     private readonly ISyncStatusStore _statusStore;
     private readonly INotificationPublisher _notificationPublisher;
+    private readonly NotificationConfig _notificationConfig;
+    private readonly NotificationEventFilter _notificationEventFilter;
     private readonly ScheduleCalculator _scheduleCalculator;
     private readonly SyncScheduleOptions _scheduleOptions;
     private readonly SyncRunRequest _baseRequest;
@@ -29,10 +32,45 @@ public sealed class SyncScheduler : ISyncScheduler
         SyncRunRequest baseRequest,
         TimeProvider timeProvider,
         ILogger<SyncScheduler> logger)
+        : this(
+            orchestrator,
+            statusStore,
+            notificationPublisher,
+            new NotificationConfig
+            {
+                Enabled = true,
+                OnEvents =
+                [
+                    NotificationEventTypes.ScheduledSyncCompleted,
+                    NotificationEventTypes.ScheduledSyncFailed
+                ]
+            },
+            new NotificationEventFilter(),
+            scheduleCalculator,
+            scheduleOptions,
+            baseRequest,
+            timeProvider,
+            logger)
+    {
+    }
+
+    public SyncScheduler(
+        ISyncOrchestrator orchestrator,
+        ISyncStatusStore statusStore,
+        INotificationPublisher notificationPublisher,
+        NotificationConfig notificationConfig,
+        NotificationEventFilter notificationEventFilter,
+        ScheduleCalculator scheduleCalculator,
+        SyncScheduleOptions scheduleOptions,
+        SyncRunRequest baseRequest,
+        TimeProvider timeProvider,
+        ILogger<SyncScheduler> logger)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(statusStore);
         ArgumentNullException.ThrowIfNull(notificationPublisher);
+        ArgumentNullException.ThrowIfNull(notificationConfig);
+        ArgumentNullException.ThrowIfNull(notificationEventFilter);
         ArgumentNullException.ThrowIfNull(scheduleCalculator);
         ArgumentNullException.ThrowIfNull(scheduleOptions);
         ArgumentNullException.ThrowIfNull(baseRequest);
@@ -42,6 +80,8 @@ public sealed class SyncScheduler : ISyncScheduler
         _orchestrator = orchestrator;
         _statusStore = statusStore;
         _notificationPublisher = notificationPublisher;
+        _notificationConfig = notificationConfig;
+        _notificationEventFilter = notificationEventFilter;
         _scheduleCalculator = scheduleCalculator;
         _scheduleOptions = scheduleOptions;
         _baseRequest = baseRequest;
@@ -69,7 +109,18 @@ public sealed class SyncScheduler : ISyncScheduler
                 await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
             }
 
-            await RunScheduledSyncAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await RunScheduledSyncAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Unexpected scheduled sync loop failure; the scheduler will continue.");
+            }
         }
     }
 
@@ -92,24 +143,29 @@ public sealed class SyncScheduler : ISyncScheduler
 
         try
         {
-            var request = ScheduledSyncRequestFactory.CreateScheduledRequest(_baseRequest);
-            var result = await _orchestrator.RunOnceAsync(request, cancellationToken).ConfigureAwait(false);
-            await _statusStore.SaveAsync(result, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var request = ScheduledSyncRequestFactory.CreateScheduledRequest(_baseRequest);
+                var result = await _orchestrator.RunOnceAsync(request, cancellationToken).ConfigureAwait(false);
+                await _statusStore.SaveAsync(result, CancellationToken.None).ConfigureAwait(false);
 
-            await _notificationPublisher.PublishAsync(
-                new NotificationRequest
+                var notification = NotificationRequestFactory.CreateForSyncResult(result, "scheduled");
+                if (_notificationEventFilter.ShouldPublish(_notificationConfig, notification))
                 {
-                    EventType = "ScheduledSyncCompleted",
-                    Severity = result.Success ? "Information" : "Error",
-                    Subject = result.Success ? "Scheduled sync completed" : "Scheduled sync failed",
-                    Message = result.Success
-                        ? "The scheduled Atera to Snipe-IT sync completed."
-                        : "The scheduled Atera to Snipe-IT sync completed with failures.",
-                    SyncResult = result
-                },
-                cancellationToken).ConfigureAwait(false);
+                    await _notificationPublisher.PublishAsync(notification, cancellationToken).ConfigureAwait(false);
+                }
 
-            return true;
+                return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(exception, "Scheduled sync failed outside the orchestrated pipeline; the scheduler remains active.");
+                return false;
+            }
         }
         finally
         {

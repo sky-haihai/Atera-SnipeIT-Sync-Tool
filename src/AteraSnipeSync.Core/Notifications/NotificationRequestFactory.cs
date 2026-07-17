@@ -116,11 +116,10 @@ public static class NotificationRequestFactory
             return false;
         }
 
+        var code = failure.Code.Trim();
         return CriticalFailureCodes.Any(
-            criticalCode => string.Equals(
-                criticalCode,
-                failure.Code.Trim(),
-                StringComparison.OrdinalIgnoreCase));
+            criticalCode => string.Equals(criticalCode, code, StringComparison.OrdinalIgnoreCase)
+                || code.EndsWith("." + criticalCode, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string ResolveSubject(string eventType)

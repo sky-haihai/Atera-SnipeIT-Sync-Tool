@@ -624,3 +624,17 @@ Still uncertain and must be rechecked before depending on exact behavior:
 - [ ] Confirm whether `VendorBrandModel` or `ProductName` should be the long-term Snipe-IT model source
 
 If future changes need behavior not covered above, stop and record the uncertainty instead of guessing. Real Atera API validation must be manual-only, owner/operator-run, read-only, minimal, sanitized, and documented with run instructions.
+
+## 16. 2026-07 加固设计
+
+### 16.1 `AteraPullOptions`
+
+- `int ItemsPerPage { get; init; } = 500`，校验范围 1..500，并作为官方 `itemsInPage` query 参数。
+- `int? MaxPages { get; init; }`，仅供显式连接探测；正常同步保持 `null` 并拉取完整分页。
+- `TimeSpan RetryBaseDelay { get; init; }` 与现有 retry 次数共同控制指数退避。
+
+`AteraClient.SendWithRetryAsync` 在 `429`、`HttpRequestException`、非用户取消 timeout 和 `500/502/503/504` 时重试；优先读取 `Retry-After`，否则使用 `RetryBaseDelay * 2^attempt + jitter`。`401/403` 不重试。base URI 在首个请求前由 `ApiEndpointValidator.ValidateAteraBaseUri(Uri)` 验证为 HTTPS 且 host 为 `app.atera.com`。
+
+### 16.2 最小连接探测
+
+TrayApp 仍调用 `PullInventoryAsync`，但构造 `ItemsPerPage = 1, MaxPages = 1` 的独立 `AteraClient`。该选项不得用于 `SyncRunRequest` 的正式执行路径。测试必须断言只请求 `page=1&itemsInPage=1`。

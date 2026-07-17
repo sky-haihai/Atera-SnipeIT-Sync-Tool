@@ -61,10 +61,11 @@ public interface IInventoryMapper
 一次 mapping 成功时应满足：
 
 - 每个可识别的 Atera agent 被转换成一个 `SnipeAssetImportRecord`
-- 有 serial number 时优先使用 serial number 作为 primary identity
-- 缺少 serial number 时 fallback 到 `ATERA-{AgentID}`
+- 每个输出 asset 的 `AssetTag` 都使用 `ATERA-{SourceId}`，明确标记其 Atera 来源
+- `SourceId` 优先使用 Atera Agent ID；Agent ID 缺失但有有效 serial 时才以 serial 作为兼容 fallback
+- 有可靠 serial number 时仍把 serial 作为独立 strong identity，用于目标匹配与冲突检测，但不再用于生成 Asset Tag
 - 缺少 company 时使用 default company
-- company alias 命中时，把 Atera/customer company name 映射成 canonical Snipe-IT company name
+- company alias 命中时，record 同时保留 Atera/customer 原始 company name 与 canonical Snipe-IT alias 候选；Reconstruction 不得在看不到 Snipe company snapshot 的情况下永久丢弃原名
 - 缺少 manufacturer 时使用 default manufacturer
 - 缺少 model 时使用 default model
 - category 使用 default category
@@ -132,6 +133,25 @@ Reconstruction Module 不负责：
 
 这些扩展仍应保持纯逻辑，不引入 API、file IO、UI 或 runtime scheduler 依赖。
 
+## 8.1 Device Type Ignore Extension
+
+The module must support an operator-configured `MappingOptions.IgnoredDeviceTypes` collection. Atera's official Swagger
+definition for `/api/v3/agents` returns `APIResultWrapper[AgentQueryDTO]`, and `AgentQueryDTO` includes `DeviceType` as
+a string property. The Swagger document does not define a closed enum for this field, so the mapper must not invent or
+depend on a fixed list of possible values.
+
+When an Atera agent has a non-blank `DeviceType` that matches a configured ignored device type after trimming and
+case-insensitive comparison:
+
+- the agent must not produce a `SnipeAssetImportRecord`
+- the original `AteraPullResult` remains unchanged
+- `MappingSummary.SourceAgentCount` still counts the source agent
+- `MappingSummary.MappedAssetCount` excludes the skipped agent
+- a structured Reconstruction warning records that the agent was skipped by device type
+
+Blank or missing `DeviceType` values must not be skipped unless a future API contract provides a documented sentinel
+value and the technical spec is updated.
+
 ## 9. 与后续文档的关系
 
 本文件定义模块职责边界。
@@ -145,3 +165,40 @@ Reconstruction Module 不负责：
 - validation rules
 - warning codes
 - unit test cases
+
+## 13. 2026-07 身份数据加固职责
+
+- 常见固件占位 serial（例如 `To Be Filled By O.E.M.`、`Default string`、`Unknown`、`N/A`）必须按缺失值处理，不能作为 SourceId fallback，也不能参与强身份匹配。
+- 同一 mapping batch 内重复的 source id、asset tag、有效 serial 或规范化 MAC 必须被识别并输出结构化 warning；Snipe Import 会把这类冲突升级为阻塞 failure，避免两条 source record 写入同一目标。
+- `ATERA-{SourceId}` asset tag 必须保持确定性、可重复，并对所有由 Reconstruction 输出的资产统一应用。
+- 身份规范化必须是纯逻辑并由单元测试覆盖，不访问任何外部 API。
+- ignored MAC addresses that remain on mapped records for audit but do not produce duplicate-MAC mapping warnings
+
+## 14. Virtual Machine 共享 serial 例外
+
+部分 Atera 环境会让多个独立虚拟机使用同一个宿主机/固件 serial，但每个虚拟机仍有不同的 Atera agent id。Reconstruction 必须只在同一 batch 内 serial 确实重复、且 record 的规范化 `ModelName` 等于 `Virtual Machine` 时应用以下规则：
+
+- `AssetTag` 保持全局统一规则生成的 `ATERA-{SourceId}`；VM 例外不再需要改变 tag，只改变 serial 的身份可靠性。
+- 原始规范化 serial 保留在 `SnipeAssetImportRecord.Serial`，供 Preview 与审计显示。
+- `SerialIsReliableIdentity` 设为 `false`，明确该 serial 不参与 batch duplicate gate、目标匹配或 Snipe-IT serial payload。
+- 输出 `SharedVirtualMachineSerial` structured warning，说明受影响 source id 与 fallback 行为。
+- 同组中非 `Virtual Machine` 的 record 不应用例外；物理设备之间的重复 serial 仍输出 `DuplicateSerial` 并由 import 阻塞。
+
+该规则不依赖 MAC 是否存在或唯一。Atera agent id 必须已通过现有 source-id uniqueness gate；否则仍按重复 source id 阻塞。
+
+## 15. Device Type 审计与单一默认 Category 职责
+
+- `MappingOptions` 必须提供单一 `DefaultCategoryName`；所有未被忽略的 Atera agent（包括 `DeviceType=Server`）都映射到该 category，默认配置为 `Computer`。
+- `SnipeAssetImportRecord` 必须保留 trim 后的原始 `DeviceType`；空或缺失值保留为 `null`，不得根据 model 名称猜测 device type。
+- Category 赋值发生在纯 mapping 阶段，不调用 Snipe-IT API。SnipeImport 只消费 record 上已经确定的 `CategoryName` 与用于审计的 `DeviceType`。
+- 被 `IgnoredDeviceTypes` 命中的 agent 仍在分类前跳过，不产生 import record。
+- 成功条件：Server、PC、Workstation、Mac、Linux、SNMP、TCP、未知非空值与空值均输出同一个默认 Computer category，并保留可审计的 DeviceType。
+- 失败边界：默认 category 配置缺失或空白时，由配置/UI/Worker composition 在运行前拒绝，不允许真实同步使用猜测值。
+
+## 16. Manufacturer Alias 职责
+
+- `MappingOptions` 必须接收 operator 配置的 `ManufacturerAliases`，key 为 Atera manufacturer，value 为 canonical Snipe-IT manufacturer。
+- manufacturer alias 与 company alias 使用相同的确定性比较规则：trim、忽略大小写、折叠连续空白、把 non-breaking space 视为普通空格，并把常见 dash-like 字符规范为 `-`。
+- mapped record 的 `ManufacturerName` 必须保留 Atera/default source 名称，`ManufacturerAliasName` 保存配置右侧的 canonical 候选；缺失 manufacturer 的默认值也允许生成 alias 候选。
+- 不允许使用 fuzzy similarity 自动合并 manufacturer。未配置 alias 的名称保持原值，由 Snipe Import 按现有安全规则解析或阻塞。
+- Preview、Sync Now 与 Worker 必须消费同一 mapped batch，因此不得分别实现 manufacturer alias 分支。

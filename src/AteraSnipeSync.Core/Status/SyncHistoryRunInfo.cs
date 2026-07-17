@@ -11,4 +11,5 @@ internal sealed class SyncHistoryRunInfo
     public required DateTimeOffset FinishedAtUtc { get; init; }
     public required long DurationMs { get; init; }
     public required bool DryRun { get; init; }
+    public bool Cancelled { get; init; }
 }
