@@ -77,7 +77,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Build-Release.ps1
 ```
 
-WiX 7 build 要求项目所有者先阅读并明确接受适用的 OSMF EULA；自动化或 agent 不得代表项目所有者接受法律条款。未接受时预期得到 `WIX7015`，且不得把该次运行视为 release 成功。
+项目所有者已于 2026-07-23 明确同意适用的 WiX 7 OSMF EULA，installer project 以 `AcceptEula=wix7` 记录该授权。若该值缺失或错误，`WIX7015` 应当使 release 失败。
 
 成功输出：
 
@@ -89,7 +89,7 @@ artifacts\release\v1.0.0\release-manifest.json
 
 ## 5. MSI 静态与 administrative extraction 验收
 
-在 disposable VM 上创建临时目录并执行 administrative extraction；它不得注册 service：
+`Build-Release.ps1` 已自动执行一次 administrative extraction 和下列静态检查。也可在 disposable VM 上手工复核；administrative extraction 不得注册 service：
 
 ```powershell
 $msi = '<absolute-path-to-msi>'
@@ -124,7 +124,7 @@ msiexec.exe /a $msi TARGETDIR=$extractRoot /qn /norestart /L*v "$extractRoot.log
 
 ## 7. 常见失败
 
-- `WIX7015`：项目所有者尚未明确接受 WiX 7 OSMF EULA，不得自动绕过。
+- `WIX7015`：确认 project 中的 `AcceptEula=wix7` 仍来自 2026-07-23 的 owner 授权，且没有被移除或改坏；不得使用其他未授权值绕过。
 - merge collision：两个 publish 的同名文件 hash 不一致；不能选择“后写覆盖”，必须统一 runtime/package source。
 - package 出现 PDB/local config：检查 publish properties、Worker `CopyToPublishDirectory` 与 WiX `Files/Exclude`。
 - upgrade 删除 data：检查 condition 是否仍精确包含 `REMOVELOCALDATA=1 AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`。

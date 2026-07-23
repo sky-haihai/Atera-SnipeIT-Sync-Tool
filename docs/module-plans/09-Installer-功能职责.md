@@ -91,7 +91,7 @@ Installer 不得安装 `appsettings.local.json`、示例 credential、developmen
 以下任一情况阻止 v1.0 tag：
 
 - source build/test 或 WiX validation 失败。
-- WiX 7 返回 `WIX7015`，表示尚未获得 owner 的 EULA 接受授权。
+- 若 owner 于 2026-07-23 授权记录的 `AcceptEula=wix7` 缺失或错误，WiX 7 返回 `WIX7015`，release 必须失败。
 - dirty source 生成了被标记为 final 的 artifact。
 - MSI 包含 credential/local config/development/test/PDB 文件。
 - Worker/Tray 不在同一目录，service identity/account/start mode 不符合固定 contract。

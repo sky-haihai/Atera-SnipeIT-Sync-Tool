@@ -32,7 +32,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\Build-Release.ps1 -AllowDirty
 ```
 
-The final artifact must be rebuilt from a clean commit without `-AllowDirty`. WiX 7 requires the project owner to review and explicitly accept the applicable OSMF EULA; the repository must not record acceptance until the owner authorizes it.
+The final artifact must be rebuilt from a clean commit without `-AllowDirty`. The project owner accepted the applicable WiX 7 OSMF EULA for this release workflow on 2026-07-23; the installer project records that authorization as `AcceptEula=wix7`.
 
 Expected outputs:
 

@@ -21,6 +21,8 @@ public sealed class InstallerContractTests
         Assert.Equal("1.0.0", ElementValue(document, "VersionPrefix"));
         Assert.Equal("1.0.0.0", ElementValue(document, "AssemblyVersion"));
         Assert.Equal("1.0.0.0", ElementValue(document, "FileVersion"));
+        Assert.Equal("1.0.0", ElementValue(document, "InformationalVersion"));
+        Assert.Equal("false", ElementValue(document, "IncludeSourceRevisionInInformationalVersion"));
         Assert.Equal("Vue IT Inc.", ElementValue(document, "Company"));
         Assert.Equal("Atera Snipe-IT Auto Sync", ElementValue(document, "Product"));
     }
@@ -28,8 +30,12 @@ public sealed class InstallerContractTests
     [Fact]
     public void PackageIdentity_IsPerMachineX64AndUsesFixedPublisher()
     {
-        var package = SingleElement(LoadXml("installer", "AteraSnipeSync.Installer", "Package.wxs"), "Package");
+        var packageDocument = LoadXml("installer", "AteraSnipeSync.Installer", "Package.wxs");
+        var package = SingleElement(packageDocument, "Package");
         var project = LoadXml("installer", "AteraSnipeSync.Installer", "AteraSnipeSync.Installer.wixproj");
+        var arpIconProperty = packageDocument.Descendants()
+            .Single(element => element.Name.LocalName == "Property" && Attribute(element, "Id") == "ARPPRODUCTICON");
+        var productIcon = SingleElement(packageDocument, "Icon");
 
         Assert.Equal("wix7", ElementValue(project, "AcceptEula"));
         Assert.Equal("Vue IT Inc.", Attribute(package, "Manufacturer"));
@@ -37,7 +43,10 @@ public sealed class InstallerContractTests
         Assert.Equal("$(InstallerProductCode)", Attribute(package, "ProductCode"));
         Assert.Equal(ExpectedUpgradeCode, Attribute(package, "UpgradeCode"));
         Assert.Equal("perMachine", Attribute(package, "Scope"));
-        Assert.Equal("x64", Attribute(package, "Platform"));
+        Assert.Equal("x64", ElementValue(project, "InstallerPlatform"));
+        Assert.Equal("ProductIcon", Attribute(arpIconProperty, "Value"));
+        Assert.Equal("ProductIcon", Attribute(productIcon, "Id"));
+        Assert.EndsWith(@"AteraSnipeSync.TrayApp\Assets\tray-icon.ico", Attribute(productIcon, "SourceFile"), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -69,11 +78,14 @@ public sealed class InstallerContractTests
         Assert.Equal("HKLM", Attribute(runValue, "Root"));
         Assert.Equal(@"Software\Microsoft\Windows\CurrentVersion\Run", Attribute(runValue, "Key"));
         Assert.Equal("ApplicationStartMenuFolder", Attribute(shortcut, "Directory"));
+        Assert.Equal("yes", Attribute(shortcut, "Advertise"));
         Assert.Contains(permissions, permission => Attribute(permission, "User") == "SYSTEM" && Attribute(permission, "GenericAll") == "yes");
         Assert.Contains(permissions, permission => Attribute(permission, "User") == "Administrators" && Attribute(permission, "GenericAll") == "yes");
         Assert.Contains(permissions, permission =>
             Attribute(permission, "User") == "Users" &&
-            Attribute(permission, "CreateChild") == "yes" &&
+            Attribute(permission, "GenericRead") == "yes" &&
+            Attribute(permission, "GenericWrite") == "yes" &&
+            Attribute(permission, "GenericExecute") == "yes" &&
             Attribute(permission, "Delete") == "yes");
         Assert.Equal(3, document.Descendants().Count(element =>
             element.Name.LocalName == "Component" &&
@@ -131,6 +143,10 @@ public sealed class InstallerContractTests
         Assert.Contains("Publish merge collision has different content", script, StringComparison.Ordinal);
         Assert.Contains(ExpectedProductNamespace, script, StringComparison.Ordinal);
         Assert.Contains("Get-FileHash", script, StringComparison.Ordinal);
+        Assert.Contains("msiexec.exe", script, StringComparison.Ordinal);
+        Assert.Contains("ExtractAssociatedIcon", script, StringComparison.Ordinal);
+        Assert.Contains("VersionInfo.ProductVersion", script, StringComparison.Ordinal);
+        Assert.Contains("ConvertFrom-Json", script, StringComparison.Ordinal);
         Assert.Contains("AteraSnipeSync-$Version-win-x64.msi", script, StringComparison.Ordinal);
         Assert.Contains("release-manifest.json", script, StringComparison.Ordinal);
     }

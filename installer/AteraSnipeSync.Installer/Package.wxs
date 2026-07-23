@@ -6,7 +6,6 @@
            ProductCode="$(InstallerProductCode)"
            UpgradeCode="549B4FDF-C466-4CF0-A356-0EC6380C24CD"
            Scope="perMachine"
-           Platform="x64"
            Language="1033"
            Codepage="1252">
     <SummaryInformation Description="Atera to Snipe-IT automatic synchronization service and tray application."
@@ -65,14 +64,17 @@
                       Directory="ApplicationStartMenuFolder"
                       Name="Atera Snipe-IT Auto Sync"
                       Description="Open the Atera Snipe-IT Auto Sync tray application."
+                      Advertise="yes"
                       WorkingDirectory="INSTALLFOLDER" />
           </File>
           <RegistryValue Root="HKLM"
                          Key="Software\Microsoft\Windows\CurrentVersion\Run"
                          Name="AteraSnipeSync.TrayApp"
                          Value="&quot;[INSTALLFOLDER]AteraSnipeSync.TrayApp.exe&quot;"
-                         Type="string"
-                         Bitness="always64" />
+                         Type="string" />
+          <RemoveFolder Id="RemoveApplicationStartMenuFolder"
+                        Directory="ApplicationStartMenuFolder"
+                        On="uninstall" />
         </Component>
 
         <Files Include="!(bindpath.PublishRoot)\**">
@@ -88,20 +90,7 @@
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationStartMenuFolder" Name="Atera Snipe-IT Auto Sync">
-        <Component Id="StartMenuFolderComponent"
-                   Guid="6F8DDB1A-0E1B-46E9-893C-1664DD166A25"
-                   Bitness="always64">
-          <RemoveFolder Id="RemoveApplicationStartMenuFolder" On="uninstall" />
-          <RegistryValue Root="HKLM"
-                         Key="Software\Vue IT Inc.\AteraSnipeSync"
-                         Name="StartMenuFolder"
-                         Value="1"
-                         Type="integer"
-                         Bitness="always64"
-                         KeyPath="yes" />
-        </Component>
-      </Directory>
+      <Directory Id="ApplicationStartMenuFolder" Name="Atera Snipe-IT Auto Sync" />
     </StandardDirectory>
 
     <StandardDirectory Id="CommonAppDataFolder">
@@ -116,20 +105,11 @@
             <util:PermissionEx User="Administrators" Domain="BUILTIN" GenericAll="yes" />
             <util:PermissionEx User="Users"
                                Domain="BUILTIN"
-                               Read="yes"
-                               Write="yes"
-                               Append="yes"
-                               CreateFile="yes"
-                               CreateChild="yes"
+                               GenericRead="yes"
+                               GenericWrite="yes"
+                               GenericExecute="yes"
                                Delete="yes"
                                DeleteChild="yes"
-                               ReadAttributes="yes"
-                               WriteAttributes="yes"
-                               ReadExtendedAttributes="yes"
-                               WriteExtendedAttributes="yes"
-                               ReadPermission="yes"
-                               Traverse="yes"
-                               Synchronize="yes"
                                Inheritable="yes" />
           </CreateFolder>
         </Component>
@@ -142,7 +122,6 @@
                          Name="ProgramDataRoot"
                          Value="[ProgramDataRoot]"
                          Type="string"
-                         Bitness="always64"
                          KeyPath="yes" />
           <util:RemoveFolderEx Id="RemoveAllLocalData"
                                Property="ATERASNIPESYNC_PROGRAMDATA_ROOT"

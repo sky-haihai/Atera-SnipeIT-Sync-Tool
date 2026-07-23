@@ -131,6 +131,124 @@ function Merge-PublishDirectory {
     }
 }
 
+function Assert-ReleaseArtifact {
+    param(
+        [Parameter(Mandatory)]
+        [string]$RepositoryRoot,
+
+        [Parameter(Mandatory)]
+        [string]$Version,
+
+        [Parameter(Mandatory)]
+        [string]$MsiPath,
+
+        [Parameter(Mandatory)]
+        [string]$ChecksumPath,
+
+        [Parameter(Mandatory)]
+        [string]$ManifestPath,
+
+        [Parameter(Mandatory)]
+        [string]$ExpectedCommit,
+
+        [Parameter(Mandatory)]
+        [string]$ExpectedProductCode,
+
+        [Parameter(Mandatory)]
+        [bool]$ExpectedDirty
+    )
+
+    $validationRoot = Reset-ArtifactDirectory `
+        -RepositoryRoot $RepositoryRoot `
+        -Path (Join-Path $RepositoryRoot "artifacts\.validation\v$Version")
+    $administrativeLog = Join-Path $validationRoot 'administrative-extraction.log'
+    $msiExec = Join-Path $env:SystemRoot 'System32\msiexec.exe'
+    $arguments = @(
+        '/a',
+        "`"$MsiPath`"",
+        "TARGETDIR=`"$validationRoot`"",
+        '/qn',
+        '/norestart',
+        '/L*v',
+        "`"$administrativeLog`""
+    )
+    $process = Start-Process `
+        -FilePath $msiExec `
+        -ArgumentList $arguments `
+        -Wait `
+        -PassThru `
+        -WindowStyle Hidden
+    if ($process.ExitCode -ne 0) {
+        throw "MSI administrative extraction failed with exit code $($process.ExitCode). See $administrativeLog"
+    }
+
+    $workerMatches = @(Get-ChildItem -LiteralPath $validationRoot -File -Recurse -Filter 'AteraSnipeSync.WorkerService.exe')
+    $trayMatches = @(Get-ChildItem -LiteralPath $validationRoot -File -Recurse -Filter 'AteraSnipeSync.TrayApp.exe')
+    if ($workerMatches.Count -ne 1 -or $trayMatches.Count -ne 1) {
+        throw 'Administrative extraction must contain exactly one Worker executable and one Tray executable.'
+    }
+
+    $workerExecutable = $workerMatches[0]
+    $trayExecutable = $trayMatches[0]
+    if ($workerExecutable.DirectoryName -ne $trayExecutable.DirectoryName) {
+        throw 'The extracted Worker and Tray executables must be in the same directory.'
+    }
+
+    foreach ($executable in @($workerExecutable, $trayExecutable)) {
+        if ($executable.VersionInfo.ProductVersion -ne $Version -or
+            $executable.VersionInfo.FileVersion -ne '1.0.0.0' -or
+            $executable.VersionInfo.CompanyName -ne 'Vue IT Inc.') {
+            throw "Unexpected version/company metadata in $($executable.Name)."
+        }
+    }
+
+    Add-Type -AssemblyName System.Drawing
+    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($trayExecutable.FullName)
+    try {
+        if ($null -eq $icon -or $icon.Width -lt 16 -or $icon.Height -lt 16) {
+            throw 'The extracted Tray executable does not expose a usable associated icon.'
+        }
+    }
+    finally {
+        if ($null -ne $icon) {
+            $icon.Dispose()
+        }
+    }
+
+    $applicationRoot = $workerExecutable.DirectoryName
+    $forbiddenFiles = @(Get-ChildItem -LiteralPath $applicationRoot -File -Recurse | Where-Object {
+        $_.Extension -ieq '.pdb' -or
+        $_.Name -ieq 'appsettings.Development.json' -or
+        $_.Name -ieq 'appsettings.local.json' -or
+        $_.Name -like '*.local.json' -or
+        $_.Name -ieq 'secrets.json' -or
+        $_.Name -like '*Tests.dll'
+    })
+    if ($forbiddenFiles.Count -ne 0) {
+        throw "Forbidden files were found in the extracted MSI: $($forbiddenFiles.FullName -join ', ')"
+    }
+
+    $actualHash = (Get-FileHash -LiteralPath $MsiPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedChecksumLine = "$actualHash *$([System.IO.Path]::GetFileName($MsiPath))"
+    if ((Get-Content -LiteralPath $ChecksumPath -Raw).Trim() -ne $expectedChecksumLine) {
+        throw 'The SHA-256 sidecar does not match the MSI.'
+    }
+
+    $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    if ($manifest.version -ne $Version -or
+        $manifest.assemblyVersion -ne '1.0.0.0' -or
+        $manifest.fileVersion -ne '1.0.0.0' -or
+        $manifest.runtimeIdentifier -ne 'win-x64' -or
+        -not $manifest.selfContained -or
+        $manifest.manufacturer -ne 'Vue IT Inc.' -or
+        $manifest.productCode -ne $ExpectedProductCode -or
+        $manifest.commit -ne $ExpectedCommit -or
+        [bool]$manifest.dirty -ne $ExpectedDirty -or
+        $manifest.sha256 -ne $actualHash) {
+        throw 'The release manifest does not match the validated artifact or build context.'
+    }
+}
+
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     throw 'This release script supports Windows only.'
 }
@@ -185,6 +303,8 @@ try {
         '-p:DebugSymbols=false',
         '-p:DebugType=None',
         "-p:Version=$Version",
+        "-p:InformationalVersion=$Version",
+        '-p:IncludeSourceRevisionInInformationalVersion=false',
         '-p:AssemblyVersion=1.0.0.0',
         '-p:FileVersion=1.0.0.0'
     )
@@ -234,6 +354,11 @@ if (-not (Test-Path -LiteralPath $msiPath)) {
     throw "WiX did not produce the expected MSI: $msiPath"
 }
 
+$wixPdbPath = Join-Path $releaseRoot "AteraSnipeSync-$Version-win-x64.wixpdb"
+if (Test-Path -LiteralPath $wixPdbPath) {
+    Remove-Item -LiteralPath $wixPdbPath -Force
+}
+
 $msiHash = (Get-FileHash -LiteralPath $msiPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $checksumPath = "$msiPath.sha256"
 Set-Content -LiteralPath $checksumPath -Encoding ascii -Value "$msiHash *$msiName"
@@ -261,6 +386,16 @@ $manifest = [ordered]@{
     unsigned = $true
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+
+Assert-ReleaseArtifact `
+    -RepositoryRoot $repositoryRoot `
+    -Version $Version `
+    -MsiPath $msiPath `
+    -ChecksumPath $checksumPath `
+    -ManifestPath $manifestPath `
+    -ExpectedCommit $commit `
+    -ExpectedProductCode $productCode `
+    -ExpectedDirty $isDirty
 
 Write-Host "Release artifact: $msiPath"
 Write-Host "SHA-256: $msiHash"

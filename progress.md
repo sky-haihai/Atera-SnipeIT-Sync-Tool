@@ -3156,6 +3156,8 @@ Production/release code changed:
 - added the WiX 7 Installer project, fixed product/upgrade identities, per-machine x64 layout, LocalSystem automatic Worker service, all-users Start Menu shortcut, HKLM Tray startup, ProgramData directories and ACLs.
 - added secure opt-in `REMOVELOCALDATA`, the default-unchecked interactive uninstall dialog, remembered HKLM ProgramData path, and Util `RemoveFolderEx` with exact upgrade-safe condition `REMOVELOCALDATA=1 AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`.
 - added `scripts/Build-Release.ps1` with clean-tree enforcement, explicit `-AllowDirty` development mode, locked restore, Release build/test, two self-contained publishes, SHA-256 collision checking, forbidden-file gates, UUID v5 ProductCode, MSI build, checksum and manifest output.
+- fixed Windows ProductVersion at exactly `1.0.0` by disabling the SDK source-revision suffix; the release manifest retains the full Git commit separately.
+- extended the release script with automatic `msiexec /a` administrative extraction and strict checks for the two EXEs, version/company metadata, Tray icon, forbidden files, checksum sidecar and manifest; `.wixpdb` is not shipped in the release output.
 
 Automated tests changed:
 
@@ -3178,6 +3180,7 @@ dotnet build AteraSnipeSync.sln --configuration Release --no-restore
 dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --configuration Release --no-build --no-restore --filter FullyQualifiedName~InstallerContractTests
 # CompleteCommand_CanRunLongerThanRequestReadTimeout executed in a 20-run loop.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Build-Release.ps1 -AllowDirty
+# Read-only MSI table inspection used WixToolset.Dtf.WindowsInstaller against the generated MSI.
 git diff --check
 ```
 
@@ -3189,12 +3192,15 @@ Installer contract tests: 8 passed, 0 failed, 0 skipped
 Named Pipe focused flaky gate: 20 consecutive runs passed
 Complete release test assembly: 325 passed, 0 failed, 0 skipped (original 317 plus 8 Installer contracts)
 Worker/Tray self-contained publish: succeeded; merged with no differing-hash collision after runtime alignment
-WiX package build: blocked by WIX7015 before source compilation because the project owner has not yet explicitly accepted the WiX 7 OSMF EULA
+Project owner explicitly accepted the applicable WiX 7 OSMF EULA on 2026-07-23; the project records AcceptEula=wix7
+WiX package build and MSI ICE validation: succeeded, 0 warnings, 0 errors
+Administrative extraction artifact gate: passed; both EXEs share one directory, ProductVersion=1.0.0, FileVersion=1.0.0.0, CompanyName=Vue IT Inc., Tray icon readable, forbidden-file count=0
+MSI database contract inspection: passed for identity/publisher, service, HKLM startup, shortcut, uninstall dialog, secure properties and upgrade-safe Wix4RemoveFolderEx condition
+Development artifact SHA-256: 4a6ea2a98d871cfe88534e4a90afedbc8d5362da8ece09b697872ea4fb60b71c (dirty-tree validation artifact; not the final clean-commit hash)
 git diff --check: passed (line-ending conversion warnings only)
 ```
 
 Remaining release gates:
 
-- project owner must review the official WiX 7 OSMF EULA and explicitly authorize acceptance; automation must not accept it on the owner's behalf.
-- after authorization, add the explicit WiX 7 acceptance, compile/validate the MSI, perform administrative extraction/version/content/hash/manifest checks, and rebuild from the clean release commit.
+- review and commit the release changes as `release: prepare v1.0.0`, then rebuild the final artifact from that clean commit without `-AllowDirty`.
 - run the documented Windows 11 x64 and Windows Server 2022 x64 VM install/repair/uninstall/upgrade matrix. No local tag is created until both VM matrices pass; no push is automatic.
