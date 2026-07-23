@@ -13,7 +13,7 @@ Installer 自动测试只读取 release metadata、WiX source、project 和 Powe
 - ProductVersion `1.0.0`、Assembly/FileVersion `1.0.0.0`、Company/Manufacturer `Vue IT Inc.`。
 - per-machine x64、UpgradeCode 和 build-time deterministic ProductCode input。
 - `AteraSnipeItAutoSync` 的 LocalSystem/automatic/start/stop/remove contract。
-- all-users Start Menu shortcut、HKLM Tray Run registration。
+- all-users Start Menu shortcut、HKLM Tray Run registration；shortcut 必须显式引用 `ProductIcon.exe`、`IconIndex=0`，Icon table PE source 与 ARP icon 必须使用同一 identifier。
 - ProgramData root ACL 及 Logs/History/Preflight directory components。
 - `REMOVELOCALDATA` secure、默认无值，以及 checkbox `CheckBoxValue=1`。
 - `RemoveFolderEx` 的 exact property/on/condition，尤其 `NOT UPGRADINGPRODUCTCODE`。
@@ -101,7 +101,7 @@ msiexec.exe /a $msi TARGETDIR=$extractRoot /qn /norestart /L*v "$extractRoot.log
 
 - 两个 EXE 位于同一个 `AteraSnipeSync` directory。
 - 两个 EXE 的 ProductVersion 为 `1.0.0`、FileVersion 为 `1.0.0.0`、CompanyName 为 `Vue IT Inc.`。
-- Tray EXE 和 MSI ARP icon 可读取。
+- Tray EXE 和 MSI ARP icon 可读取；生成 MSI 的 Shortcut 表 `Icon_` 为 `ProductIcon.exe`、`IconIndex` 为 `0`，Icon 表包含同名 row。
 - extracted tree 不含 `*.pdb`、`appsettings.Development.json`、`appsettings.local.json`、`*.local.json`、test assembly 或真实 credential。
 - `.sha256` 与 `Get-FileHash -Algorithm SHA256` 一致。
 - manifest 的 version/RID/commit/dirty/hash/manufacturer/productCode 正确；正式 clean build 的 `dirty` 必须为 `false`。
@@ -118,7 +118,7 @@ msiexec.exe /a $msi TARGETDIR=$extractRoot /qn /norestart /L*v "$extractRoot.log
 6. 安装临时 `1.0.1` major-upgrade MSI，即使传 `REMOVELOCALDATA=1`：原 ProgramData marker 保留。
 7. repair：不删除、不覆盖、不重置 ProgramData marker/config。
 8. 保持 Tray 运行后卸载：Restart Manager 正常提示关闭或重启；不得强杀后声称 cleanup 成功。
-9. 确认 service 为 LocalSystem/automatic/running，all-users Start Menu shortcut 与 HKLM Run value 存在。
+9. 确认 service 为 LocalSystem/automatic/running，all-users Start Menu shortcut 与 HKLM Run value 存在；Explorer/Start Menu shortcut 显示产品图标而不是通用空白图标。
 
 验收期间不配置真实 API key，不发起 sync，不测试真实 SMTP/webhook。完成后删除 VM snapshot、临时 extraction 和 marker；不得把 VM 生成的 config/log 加入 repository。
 
@@ -129,3 +129,4 @@ msiexec.exe /a $msi TARGETDIR=$extractRoot /qn /norestart /L*v "$extractRoot.log
 - package 出现 PDB/local config：检查 publish properties、Worker `CopyToPublishDirectory` 与 WiX `Files/Exclude`。
 - upgrade 删除 data：检查 condition 是否仍精确包含 `REMOVELOCALDATA=1 AND REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE`。
 - dialog 默认勾选：检查 `REMOVELOCALDATA` 是否被赋默认值，checkbox 是否只使用 `CheckBoxValue="1"`。
+- Start Menu 显示通用空白图标：检查 advertised Shortcut 是否同时设置 `Icon="ProductIcon.exe"`、`IconIndex="0"`，对应 Icon table row 是否使用 TrayApp EXE 作为 PE source；只设置 `ARPPRODUCTICON` 不会替 shortcut 填充 `Icon_`。

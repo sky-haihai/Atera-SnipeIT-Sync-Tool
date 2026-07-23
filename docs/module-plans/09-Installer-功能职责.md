@@ -33,10 +33,10 @@ Installer 必须：
 - 把 self-contained Worker 与 Tray 文件放在同一目录。
 - 注册 `AteraSnipeItAutoSync` Windows Service，显示名 `Atera Snipe-IT Auto Sync`，LocalSystem、自动启动。
 - 安装或升级后启动 Worker；升级或卸载前停止 Worker；卸载时删除 service registration。
-- 创建所有用户 Start Menu shortcut。
+- 创建所有用户 Start Menu shortcut，并显式使用 TrayApp 的产品图标；不得依赖 Windows 从 advertised shortcut target 自动推断图标。
 - 写入 HKLM `Run` 值 `AteraSnipeSync.TrayApp`，使每个交互式登录会话启动 Tray。
 - 创建 `%ProgramData%\AteraSnipeSync`，SYSTEM/Administrators 拥有 FullControl，Builtin Users 拥有可继承 Modify 权限。
-- 在 Add/Remove Programs 显示 Product `Atera Snipe-IT Auto Sync` 和 Publisher `Vue IT Inc.`。
+- 在 Add/Remove Programs 显示 Product `Atera Snipe-IT Auto Sync`、Publisher `Vue IT Inc.` 和同一产品图标。
 
 Installer 不得安装 `appsettings.local.json`、示例 credential、development settings、PDB、test assembly 或 source file。
 
@@ -83,7 +83,7 @@ Installer 不得安装 `appsettings.local.json`、示例 credential、developmen
 - 完整 automated tests 一次通过；已知 IPC timing test 连续 20 次通过。
 - WiX build 和 MSI validation 通过。
 - administrative extraction 证明 Worker/Tray EXE 同目录，版本和 Company 正确，没有禁止文件。
-- contract tests 锁定 service、startup、ACL、upgrade、Manufacturer、uninstall prompt 和 conditional data removal。
+- contract tests 锁定 service、startup、Start Menu/ARP 产品图标、ACL、upgrade、Manufacturer、uninstall prompt 和 conditional data removal。
 - Windows 11 / Server 2022 隔离 VM 手工验证 install/repair/upgrade/uninstall matrix。
 
 ## 9. 失败条件

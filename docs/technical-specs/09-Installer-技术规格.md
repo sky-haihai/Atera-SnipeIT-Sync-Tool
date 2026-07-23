@@ -105,7 +105,7 @@ Files：
 - `Files Include="!(bindpath.PublishRoot)\**"` harvest merged output。
 - 明确 Exclude `*.pdb`、`appsettings.Development.json`、`appsettings.local.json`、`*.local.json`、`*Tests*`。
 - Worker EXE 使用显式 `File`/`Component`，作为 service component KeyPath；harvest set 必须排除该 EXE，避免 duplicate file row。
-- Tray EXE 使用显式 `File`/`Component`，承载 Start Menu shortcut 与 ARP icon source；harvest set 排除该 EXE。
+- Tray EXE 使用显式 `File`/`Component`，承载 Start Menu shortcut；它同时作为 MSI Icon table 的 PE icon source，harvest set 排除该 EXE。
 
 Service component：
 
@@ -138,7 +138,7 @@ Name=AteraSnipeSync.TrayApp
 Value="[INSTALLFOLDER]AteraSnipeSync.TrayApp.exe"
 ```
 
-Start Menu shortcut 位于 Common Programs 下的 `Atera Snipe-IT Auto Sync` folder，目标为 Tray EXE，working directory 为 INSTALLFOLDER。卸载时 shortcut 和 empty folder 都删除。
+Start Menu shortcut 位于 Common Programs 下的 `Atera Snipe-IT Auto Sync` folder，目标为 Tray EXE，working directory 为 INSTALLFOLDER。因为它是 advertised shortcut，必须显式设置 `Icon="ProductIcon.exe"` 和 `IconIndex="0"`。对应 Icon table row 使用 `<Icon Id="ProductIcon.exe" SourceFile="!(bindpath.PublishRoot)\AteraSnipeSync.TrayApp.exe" />`：`.exe` identifier 与 shortcut target extension 一致，PE source 复用已经嵌入 TrayApp 的产品图标。`ARPPRODUCTICON` 也引用同一个 `ProductIcon.exe` row。卸载时 shortcut 和 empty folder 都删除。
 
 ProgramData component：
 
@@ -197,7 +197,7 @@ silent `/qn` 不执行 UI sequence，execute sequence直接根据 command-line p
 - version/company/product metadata。
 - WiX package identity、UpgradeCode、x64/perMachine、MajorUpgrade downgrade policy。
 - service install/control exact values。
-- Worker/Tray co-location authoring、HKLM Run、common Start Menu shortcut。
+- Worker/Tray co-location authoring、HKLM Run、common Start Menu shortcut，以及 Shortcut `Icon/IconIndex`、Icon table PE source 和 `ARPPRODUCTICON` 的同一引用。
 - ProgramData folders、ACL、remembered path。
 - `REMOVELOCALDATA` secure/unset default、dialog checkbox、full data wording。
 - RemoveFolderEx exact Property/On/Condition，包含 `NOT UPGRADINGPRODUCTCODE`。

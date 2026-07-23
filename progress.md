@@ -3202,5 +3202,46 @@ git diff --check: passed (line-ending conversion warnings only)
 
 Remaining release gates:
 
-- review and commit the release changes as `release: prepare v1.0.0`, then rebuild the final artifact from that clean commit without `-AllowDirty`.
 - run the documented Windows 11 x64 and Windows Server 2022 x64 VM install/repair/uninstall/upgrade matrix. No local tag is created until both VM matrices pass; no push is automatic.
+
+## 2026-07-23 Start Menu Shortcut Product Icon Fix
+
+Production/release code changed:
+
+- fixed the all-users advertised Start Menu shortcut to set `Icon="ProductIcon.exe"` and `IconIndex="0"` explicitly instead of relying on Windows to infer the icon from its target.
+- changed the MSI Icon table row to `ProductIcon.exe` with the icon-bearing published TrayApp EXE as its PE source; `ARPPRODUCTICON` now reuses the same row.
+- this follows the Windows Installer rule that an advertised shortcut targeting an EXE requires a separate Icon table entry whose name has the target extension.
+
+Automated tests changed:
+
+- extended `InstallerContractTests` to lock the Shortcut icon reference/index, Icon table identifier/source and ARP icon reference.
+- tests remain source/read-only and do not install the MSI or mutate Start Menu, registry or SCM state.
+
+Documentation changed:
+
+- updated the Installer 功能职责 and 技术规格 before production code with the explicit advertised-shortcut icon responsibility and concrete WiX authoring.
+- updated the Installer unit-test guide after the regression passed with MSI table assertions and visual VM acceptance guidance.
+
+Verification commands:
+
+```powershell
+dotnet test tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --configuration Release --no-restore --filter "FullyQualifiedName~InstallerContractTests"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\Build-Release.ps1 -AllowDirty
+# Read-only DTF inspection of Shortcut, Icon and Property tables in the generated MSI.
+git diff --check
+```
+
+Latest known result:
+
+```text
+Installer contract tests: 8 passed, 0 failed, 0 skipped
+Complete release test assembly: 325 passed, 0 failed, 0 skipped
+Release solution build: succeeded, 0 warnings, 0 errors
+WiX package build and MSI ICE validation: succeeded, 0 warnings, 0 errors
+Generated MSI: Shortcut.Icon_=ProductIcon.exe, IconIndex=0; Icon.Name=ProductIcon.exe; ARPPRODUCTICON=ProductIcon.exe
+Tray PE icon extraction: succeeded, 32x32 associated icon
+Dirty-tree validation MSI SHA-256: ed69aa84ff17bd883c04509174eff5e298caf8d14a9cd64913863f1215a584a8
+git diff --check: passed (line-ending conversion warnings only)
+```
+
+Remaining verification: install the rebuilt MSI (uninstall the earlier same-version package first), then confirm the all-users Start Menu shortcut displays the blue product icon. The broader Windows 11/Server 2022 VM matrix and local `v1.0.0` tag remain pending.

@@ -44,9 +44,9 @@ public sealed class InstallerContractTests
         Assert.Equal(ExpectedUpgradeCode, Attribute(package, "UpgradeCode"));
         Assert.Equal("perMachine", Attribute(package, "Scope"));
         Assert.Equal("x64", ElementValue(project, "InstallerPlatform"));
-        Assert.Equal("ProductIcon", Attribute(arpIconProperty, "Value"));
-        Assert.Equal("ProductIcon", Attribute(productIcon, "Id"));
-        Assert.EndsWith(@"AteraSnipeSync.TrayApp\Assets\tray-icon.ico", Attribute(productIcon, "SourceFile"), StringComparison.Ordinal);
+        Assert.Equal("ProductIcon.exe", Attribute(arpIconProperty, "Value"));
+        Assert.Equal("ProductIcon.exe", Attribute(productIcon, "Id"));
+        Assert.Equal(@"!(bindpath.PublishRoot)\AteraSnipeSync.TrayApp.exe", Attribute(productIcon, "SourceFile"));
     }
 
     [Fact]
@@ -79,6 +79,8 @@ public sealed class InstallerContractTests
         Assert.Equal(@"Software\Microsoft\Windows\CurrentVersion\Run", Attribute(runValue, "Key"));
         Assert.Equal("ApplicationStartMenuFolder", Attribute(shortcut, "Directory"));
         Assert.Equal("yes", Attribute(shortcut, "Advertise"));
+        Assert.Equal("ProductIcon.exe", Attribute(shortcut, "Icon"));
+        Assert.Equal("0", Attribute(shortcut, "IconIndex"));
         Assert.Contains(permissions, permission => Attribute(permission, "User") == "SYSTEM" && Attribute(permission, "GenericAll") == "yes");
         Assert.Contains(permissions, permission => Attribute(permission, "User") == "Administrators" && Attribute(permission, "GenericAll") == "yes");
         Assert.Contains(permissions, permission =>

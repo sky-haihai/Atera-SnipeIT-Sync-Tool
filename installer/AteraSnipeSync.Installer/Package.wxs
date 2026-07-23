@@ -13,7 +13,7 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of Atera Snipe-IT Auto Sync is already installed." />
 
-    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon.exe" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="MSIRESTARTMANAGERCONTROL" Value="0" />
     <Property Id="REMOVELOCALDATA" Secure="yes" />
@@ -26,7 +26,7 @@
                       Bitness="always64" />
     </Property>
 
-    <Icon Id="ProductIcon" SourceFile="..\..\src\AteraSnipeSync.TrayApp\Assets\tray-icon.ico" />
+    <Icon Id="ProductIcon.exe" SourceFile="!(bindpath.PublishRoot)\AteraSnipeSync.TrayApp.exe" />
     <UIRef Id="AteraSnipeSync_InstallUI" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -65,6 +65,8 @@
                       Name="Atera Snipe-IT Auto Sync"
                       Description="Open the Atera Snipe-IT Auto Sync tray application."
                       Advertise="yes"
+                      Icon="ProductIcon.exe"
+                      IconIndex="0"
                       WorkingDirectory="INSTALLFOLDER" />
           </File>
           <RegistryValue Root="HKLM"
