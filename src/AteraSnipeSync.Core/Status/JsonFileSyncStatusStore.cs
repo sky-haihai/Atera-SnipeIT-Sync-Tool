@@ -227,40 +227,42 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
             AddImportFailure(failure, assets, companies, models, manufacturers, categories);
         }
 
+        var summary = new SyncHistorySummary
+        {
+            Pulled = result.PullResult?.Summary.AgentCount ?? 0,
+            Mapped = result.ImportBatch?.Summary.MappedAssetCount ?? 0,
+            AssetsCreated = result.ImportResult?.CreatedAssets ?? 0,
+            AssetsUpdated = result.ImportResult?.UpdatedAssets ?? 0,
+            AssetsDeleted = result.ImportResult?.DeletedAssets ?? 0,
+            AssetsSkipped = result.ImportResult?.SkippedAssets ?? 0,
+            AssetsFailed = result.ImportResult?.FailedAssets ?? 0,
+            CompaniesCreated = result.ImportResult?.CreatedCompanies ?? 0,
+            CompaniesUpdated = 0,
+            CompaniesDeleted = 0,
+            ModelsCreated = result.ImportResult?.CreatedModels ?? 0,
+            ModelsUpdated = result.ImportResult?.UpdatedModels ?? 0,
+            ModelsDeleted = 0,
+            CategoriesCreated = result.ImportResult?.CreatedCategories ?? 0,
+            CategoriesUpdated = 0,
+            CategoriesDeleted = 0,
+            WarningCount = warnings.Count,
+            FailureCount = failures.Count
+        };
+
         return new SyncHistoryDocument
         {
             SchemaVersion = CurrentSchemaVersion,
             Run = new SyncHistoryRunInfo
             {
                 RunId = Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture),
-                Result = result.Success ? "Success" : "Failed",
+                Result = ClassifyResult(result),
                 StartedAtUtc = startedAtUtc,
                 FinishedAtUtc = finishedAtUtc,
                 DurationMs = durationMs,
-                DryRun = result.ImportResult?.DryRun ?? false,
+                DryRun = result.DryRun,
                 Cancelled = result.ImportResult?.Cancelled ?? false
             },
-            Summary = new SyncHistorySummary
-            {
-                Pulled = result.PullResult?.Summary.AgentCount ?? 0,
-                Mapped = result.ImportBatch?.Summary.MappedAssetCount ?? 0,
-                AssetsCreated = result.ImportResult?.CreatedAssets ?? 0,
-                AssetsUpdated = result.ImportResult?.UpdatedAssets ?? 0,
-                AssetsDeleted = 0,
-                AssetsSkipped = result.ImportResult?.SkippedAssets ?? 0,
-                AssetsFailed = result.ImportResult?.FailedAssets ?? failures.Count,
-                CompaniesCreated = result.ImportResult?.CreatedCompanies ?? 0,
-                CompaniesUpdated = 0,
-                CompaniesDeleted = 0,
-                ModelsCreated = result.ImportResult?.CreatedModels ?? 0,
-                ModelsUpdated = result.ImportResult?.UpdatedModels ?? 0,
-                ModelsDeleted = 0,
-                CategoriesCreated = result.ImportResult?.CreatedCategories ?? 0,
-                CategoriesUpdated = 0,
-                CategoriesDeleted = 0,
-                WarningCount = warnings.Count,
-                FailureCount = failures.Count
-            },
+            Summary = summary,
             Assets = ToChangeSet(assets),
             Companies = ToChangeSet(companies),
             Models = ToChangeSet(models),
@@ -307,7 +309,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
             Action = actionType,
             TargetType = targetType,
             Name = RequiredText(action.TargetName, "<unknown>"),
-            Identifier = null,
+            Identifier = OptionalText(action.Identifier),
             WasExecuted = action.WasExecuted,
             Message = OptionalText(action.Message)
         };
@@ -435,6 +437,7 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
             Mapped = latestDocument.Summary.Mapped,
             Created = latestDocument.Summary.AssetsCreated,
             Updated = latestDocument.Summary.AssetsUpdated,
+            Deleted = latestDocument.Summary.AssetsDeleted,
             Skipped = latestDocument.Summary.AssetsSkipped,
             Failed = latestDocument.Summary.AssetsFailed,
             LastError = latestResultIsSuccess
@@ -647,6 +650,12 @@ public sealed class JsonFileSyncStatusStore : ISyncStatusStore
     {
         return string.Equals(document.Run.Result, "Success", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Classifies a completed pipeline as success and every incomplete or fatal run as failed.
+    /// </summary>
+    private static string ClassifyResult(SyncRunResult result)
+        => result.Success ? "Success" : "Failed";
 
     private static string? NormalizeAction(string actionType)
     {

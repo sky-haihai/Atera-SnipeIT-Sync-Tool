@@ -1,5 +1,6 @@
 using AteraSnipeSync.Core.Atera;
 using AteraSnipeSync.Core.Common;
+using AteraSnipeSync.Core.Configuration;
 using AteraSnipeSync.Core.Mapping;
 using AteraSnipeSync.Core.Notifications;
 using AteraSnipeSync.Core.SnipeIt;
@@ -38,6 +39,7 @@ public sealed class ContractCompilationTests
         var runResult = new SyncRunResult
         {
             Success = true,
+            DryRun = false,
             StartedAt = DateTimeOffset.UtcNow,
             FinishedAt = DateTimeOffset.UtcNow,
             PullResult = pullResult,
@@ -53,6 +55,7 @@ public sealed class ContractCompilationTests
             Severity = "Info",
             Subject = "Sync completed",
             Message = "The sync contract can represent a successful run.",
+            Deleted = 0,
             SyncResult = runResult
         };
 
@@ -129,6 +132,7 @@ public sealed class ContractCompilationTests
             {
                 CreatedAssets = 0,
                 UpdatedAssets = 0,
+                DeletedAssets = 0,
                 SkippedAssets = 0,
                 FailedAssets = 0,
                 CreatedCompanies = 0,
@@ -154,6 +158,7 @@ public sealed class ContractCompilationTests
             return Task.FromResult(new SyncRunResult
             {
                 Success = true,
+                DryRun = false,
                 StartedAt = now,
                 FinishedAt = now,
                 PullResult = null,
@@ -185,6 +190,7 @@ public sealed class ContractCompilationTests
     {
         public Task PublishAsync(
             NotificationRequest request,
+            NotificationConfig config,
             CancellationToken cancellationToken)
         {
             return Task.CompletedTask;

@@ -16,6 +16,7 @@ public sealed class SyncStatusSnapshot
     public required int Mapped { get; init; }
     public required int Created { get; init; }
     public required int Updated { get; init; }
+    public required int Deleted { get; init; }
     public required int Skipped { get; init; }
     public required int Failed { get; init; }
     public string? LastError { get; init; }

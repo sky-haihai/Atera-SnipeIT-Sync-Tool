@@ -58,6 +58,7 @@ public static class NotificationRequestFactory
         var eventType = ResolveEventType(result.Success, normalizedTrigger);
         var severity = ResolveSeverity(result);
         var subject = ResolveSubject(eventType);
+        var deletedAssets = result.ImportResult?.DeletedAssets ?? 0;
 
         return new NotificationRequest
         {
@@ -65,6 +66,7 @@ public static class NotificationRequestFactory
             Severity = severity,
             Subject = subject,
             Message = BuildMessage(result, subject),
+            Deleted = deletedAssets,
             SyncResult = result
         };
     }
@@ -103,7 +105,9 @@ public static class NotificationRequestFactory
     {
         if (result.Success)
         {
-            return result.Warnings.Count > 0 ? SeverityWarning : SeverityInformation;
+            return result.Warnings.Count > 0 || result.Failures.Count > 0
+                ? SeverityWarning
+                : SeverityInformation;
         }
 
         return result.Failures.Any(IsCriticalFailure) ? SeverityCritical : SeverityError;
@@ -143,16 +147,18 @@ public static class NotificationRequestFactory
         string subject)
     {
         var builder = new StringBuilder();
-        var failedAssets = result.ImportResult?.FailedAssets ?? result.Failures.Count;
+        var failedAssets = result.ImportResult?.FailedAssets ?? 0;
 
-        builder.AppendLine($"Result: {(result.Success ? "Succeeded" : "Failed")}");
+        builder.AppendLine($"Result: {(result.Success ? "Completed" : "Failed")}");
         builder.AppendLine($"Event: {subject}");
         builder.AppendLine($"StartedAtUtc: {result.StartedAt.UtcDateTime:O}");
         builder.AppendLine($"FinishedAtUtc: {result.FinishedAt.UtcDateTime:O}");
+        builder.AppendLine($"DryRun: {result.DryRun}");
         builder.AppendLine($"PulledAgents: {result.PullResult?.Summary.AgentCount ?? 0}");
         builder.AppendLine($"MappedAssets: {result.ImportBatch?.Summary.MappedAssetCount ?? 0}");
         builder.AppendLine($"CreatedAssets: {result.ImportResult?.CreatedAssets ?? 0}");
         builder.AppendLine($"UpdatedAssets: {result.ImportResult?.UpdatedAssets ?? 0}");
+        builder.AppendLine($"DeletedAssets: {result.ImportResult?.DeletedAssets ?? 0}");
         builder.AppendLine($"SkippedAssets: {result.ImportResult?.SkippedAssets ?? 0}");
         builder.AppendLine($"FailedAssets: {failedAssets}");
         builder.AppendLine($"WarningCount: {result.Warnings.Count}");

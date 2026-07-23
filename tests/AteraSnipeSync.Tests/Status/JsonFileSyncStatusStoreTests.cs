@@ -61,6 +61,94 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_RecordsPipelineFailureWithoutInventingFailedAsset()
+    {
+        var historyDirectory = CreateHistoryDirectory();
+        var store = CreateStore(historyDirectory);
+        var now = new DateTimeOffset(2026, 7, 22, 12, 0, 0, TimeSpan.Zero);
+        var result = new SyncRunResult
+        {
+            Success = false,
+            DryRun = true,
+            StartedAt = now,
+            FinishedAt = now.AddSeconds(1),
+            PullResult = null,
+            ImportBatch = null,
+            ImportResult = null,
+            Warnings = [],
+            Failures =
+            [
+                new SyncFailure
+                {
+                    Stage = "AteraPull",
+                    Code = "Atera.AuthenticationFailed",
+                    Message = "Authentication failed."
+                }
+            ]
+        };
+
+        await store.SaveAsync(result, CancellationToken.None);
+
+        var root = ReadSingleHistoryRoot(historyDirectory);
+        Assert.True(root["run"]!["dryRun"]!.GetValue<bool>());
+        Assert.Equal(0, root["summary"]!["assetsFailed"]!.GetValue<int>());
+        Assert.Equal(1, root["summary"]!["failureCount"]!.GetValue<int>());
+        Assert.Equal(0, (await store.ReadLatestAsync(CancellationToken.None))?.Failed);
+    }
+
+    [Fact]
+    public async Task SaveAsync_WritesSuccessAndFailureDetails_WhenCompletedRunHasRecordFailures()
+    {
+        var historyDirectory = CreateHistoryDirectory();
+        var store = CreateStore(historyDirectory);
+        var failure = new SyncFailure
+        {
+            Stage = "SnipeImport",
+            Code = "Import.PartialFailure",
+            Message = "One asset failed after another asset was created."
+        };
+
+        await store.SaveAsync(
+            CreateRunResult(
+                success: true,
+                importResult: CreateImportResult(createdAssets: 1, failedAssets: 1),
+                failures: [failure]),
+            CancellationToken.None);
+
+        var root = ReadSingleHistoryRoot(historyDirectory);
+        Assert.Equal("Success", root["run"]!["result"]!.GetValue<string>());
+        Assert.Equal(1, root["summary"]!["assetsCreated"]!.GetValue<int>());
+        Assert.Equal(1, root["summary"]!["assetsFailed"]!.GetValue<int>());
+        Assert.Equal("One asset failed after another asset was created.", root["failures"]![0]!["message"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SaveAsync_WritesFailed_WhenIncompleteRunHasReferenceResourceOutcome()
+    {
+        var historyDirectory = CreateHistoryDirectory();
+        var store = CreateStore(historyDirectory);
+
+        await store.SaveAsync(
+            CreateRunResult(
+                success: false,
+                importResult: CreateImportResult(createdCompanies: 1, failedAssets: 1),
+                failures:
+                [
+                    new SyncFailure
+                    {
+                        Stage = "SnipeImport",
+                        Message = "Asset failed after its company was created."
+                    }
+                ]),
+            CancellationToken.None);
+
+        var root = ReadSingleHistoryRoot(historyDirectory);
+        Assert.Equal("Failed", root["run"]!["result"]!.GetValue<string>());
+        Assert.Equal(0, root["summary"]!["assetsCreated"]!.GetValue<int>());
+        Assert.Equal(1, root["summary"]!["companiesCreated"]!.GetValue<int>());
+    }
+
+    [Fact]
     public async Task SaveAsync_CreatesNewFile_ForEveryRun()
     {
         var historyDirectory = CreateHistoryDirectory();
@@ -192,6 +280,30 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SaveAsync_WritesDeletedAssetAuditAndRealCount()
+    {
+        var historyDirectory = CreateHistoryDirectory();
+        var store = CreateStore(historyDirectory);
+        const string message = "AssetId=501; AssetTag=ATERA-9999; Name=Retired Device; AteraAgentId=9999; Reason=MissingFromAtera.";
+        var importResult = CreateImportResult(
+            deletedAssets: 1,
+            actions:
+            [
+                CreateAction("Delete", "Asset", "ATERA-9999", true, message, identifier: "501")
+            ]);
+
+        await store.SaveAsync(CreateRunResult(importResult: importResult), CancellationToken.None);
+
+        var root = ReadSingleHistoryRoot(historyDirectory);
+        Assert.Equal(1, root["summary"]!["assetsDeleted"]!.GetValue<int>());
+        var deleted = Assert.Single(ArrayAt(root, "assets", "deleted"));
+        Assert.Equal("Deleted", deleted!["action"]!.GetValue<string>());
+        Assert.Equal("ATERA-9999", deleted["name"]!.GetValue<string>());
+        Assert.Equal("501", deleted["identifier"]!.GetValue<string>());
+        Assert.Equal(message, deleted["message"]!.GetValue<string>());
+    }
+
+    [Fact]
     public async Task SaveAsync_DoesNotPersistSecretsOrRawPayloads()
     {
         var historyDirectory = CreateHistoryDirectory();
@@ -277,7 +389,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
                 finishedAt: newerFinishedAt,
                 pullResult: CreatePullResult(7),
                 importBatch: CreateImportBatch(6),
-                importResult: CreateImportResult(createdAssets: 4, updatedAssets: 2, skippedAssets: 1)),
+                importResult: CreateImportResult(createdAssets: 4, updatedAssets: 2, deletedAssets: 3, skippedAssets: 1)),
             CancellationToken.None);
 
         var snapshot = await store.ReadLatestAsync(CancellationToken.None);
@@ -291,6 +403,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
         Assert.Equal(6, snapshot.Mapped);
         Assert.Equal(4, snapshot.Created);
         Assert.Equal(2, snapshot.Updated);
+        Assert.Equal(3, snapshot.Deleted);
         Assert.Equal(1, snapshot.Skipped);
         Assert.Null(snapshot.LastError);
     }
@@ -344,6 +457,41 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
         Assert.Equal(failedFinishedAt.ToUniversalTime(), snapshot.LastRunFinishedAt);
         Assert.Equal(successFinishedAt.ToUniversalTime(), snapshot.LastSuccessAt);
         Assert.Equal("Latest run failed.", snapshot.LastError);
+    }
+
+    [Fact]
+    public async Task ReadLatestAsync_CompletedRunWithRecordFailuresAdvancesLastSuccessAndKeepsCounts()
+    {
+        var historyDirectory = CreateHistoryDirectory();
+        var store = CreateStore(historyDirectory);
+        var successFinishedAt = new DateTimeOffset(2026, 6, 19, 18, 30, 0, TimeSpan.Zero);
+        var partialFinishedAt = new DateTimeOffset(2026, 6, 19, 18, 45, 0, TimeSpan.Zero);
+        await store.SaveAsync(CreateRunResult(finishedAt: successFinishedAt), CancellationToken.None);
+        await store.SaveAsync(
+            CreateRunResult(
+                success: true,
+                finishedAt: partialFinishedAt,
+                importResult: CreateImportResult(updatedAssets: 2, skippedAssets: 1, failedAssets: 1),
+                failures:
+                [
+                    new SyncFailure
+                    {
+                        Stage = "SnipeImport",
+                        Code = "SnipeImport.PartialFailure",
+                        Message = "Latest run completed only some assets."
+                    }
+                ]),
+            CancellationToken.None);
+
+        var snapshot = await store.ReadLatestAsync(CancellationToken.None);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal("Success", snapshot.LastResult);
+        Assert.Equal(partialFinishedAt.ToUniversalTime(), snapshot.LastRunFinishedAt);
+        Assert.Equal(partialFinishedAt.ToUniversalTime(), snapshot.LastSuccessAt);
+        Assert.Equal(2, snapshot.Updated);
+        Assert.Equal(1, snapshot.Skipped);
+        Assert.Null(snapshot.LastError);
     }
 
     [Fact]
@@ -467,7 +615,8 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
         string targetType,
         string targetName,
         bool wasExecuted,
-        string message)
+        string message,
+        string? identifier = null)
     {
         return new ImportAction
         {
@@ -475,6 +624,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
             TargetType = targetType,
             TargetName = targetName,
             WasExecuted = wasExecuted,
+            Identifier = identifier,
             Message = message
         };
     }
@@ -495,6 +645,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
         return new SyncRunResult
         {
             Success = success,
+            DryRun = importResult?.DryRun ?? false,
             StartedAt = runStartedAt,
             FinishedAt = runFinishedAt,
             PullResult = pullResult ?? CreatePullResult(3),
@@ -540,6 +691,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
     private static SnipeImportResult CreateImportResult(
         int createdAssets = 0,
         int updatedAssets = 0,
+        int deletedAssets = 0,
         int skippedAssets = 0,
         int failedAssets = 0,
         int createdCompanies = 0,
@@ -554,6 +706,7 @@ public sealed class JsonFileSyncStatusStoreTests : IDisposable
         {
             CreatedAssets = createdAssets,
             UpdatedAssets = updatedAssets,
+            DeletedAssets = deletedAssets,
             SkippedAssets = skippedAssets,
             FailedAssets = failedAssets,
             CreatedCompanies = createdCompanies,

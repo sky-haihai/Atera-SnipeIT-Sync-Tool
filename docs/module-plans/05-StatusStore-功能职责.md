@@ -126,7 +126,6 @@ UTC 时间字段必须用 ISO 8601 round-trip string，并以 `Z` 或明确 UTC 
 后续如需要可扩展：
 
 - `"Canceled"`
-- `"PartialSuccess"`
 
 ## 7. Asset / Company / Model 结构
 
@@ -182,9 +181,9 @@ history JSON 必须把不同资源类型分组记录。
 
 ## 8. 删除记录规则
 
-项目当前总原则是“不做删除”。因此第一版 Status Store 必须保留 `deleted` 数组字段，但正常情况下这些数组为空。
+Snipe Import 会为成功或 dry-run 计划的 stale `ATERA-` hardware delete 产生结构化 action。Status Store 必须把这些 actions 写入 asset `deleted` 数组，并把 `SnipeImportResult.DeletedAssets` 写入 summary。
 
-如果未来引入删除能力，删除行为必须由 Snipe Import 或专门删除模块产生结构化 action；Status Store 只负责保存 action，不主动判断或执行删除。
+删除行为仍只能由 Snipe Import 或专门删除模块产生；Status Store 只负责保存 action，不主动判断或执行删除。
 
 ## 9. 状态快照字段语义
 
@@ -321,7 +320,7 @@ Status Store Module 不负责：
 - 每次 failed `SyncRunResult` 都保存成一个独立 history JSON
 - history 文件名使用 UTC finished timestamp
 - history JSON 使用结构化字段表达 assets、companies、models、manufacturers、categories 的 created/updated/deleted/skipped/failed items
-- 当前“不做删除”原则下 deleted arrays 保留但为空
+- 没有删除 action 时 deleted arrays 保留且为空；存在删除 action 时按原顺序持久化完整管理员审计信息
 - `ReadLatestAsync` 可以从 history 中读取最近状态
 - `ReadLatestAsync` 可以扫描 history 得到最近一次成功时间
 - missing/empty history directory 返回 `null`
@@ -348,3 +347,22 @@ Status Store Module 不负责：
 - writer 必须使用进程内 semaphore 与跨进程 lock file 串行化 TrayApp/WorkerService 的 read-modify-write。
 - 保存成功后按可配置最大年龄和最大文件数清理历史 report；清理失败只记录 warning，不破坏本次成功保存。
 - 部分取消的 import result 必须完整保存 `Cancelled`、已执行 actions、failures 和计数，不能只记录“用户取消”。
+
+## 2026-07 Completed/failed report semantics
+
+- `run.result` 只使用 `Success` 或 `Failed`：完整走完 pipeline 的 run 写 `Success`；阶段异常、中断或取消导致未完成的 run 写 `Failed`。
+- 记录级 asset/reference failures 不产生 `PartialSuccess`。它们继续保存在 structured failure arrays 和 failed counts 中，但已完整执行的 run 仍写 `Success`。
+- 即使未完成 run 在异常前已有 created/updated/skipped/deleted 计数，也必须写 `Failed`；不能因存在部分成功 outcome 而改写成 `PartialSuccess`。
+- summary 继续持久化 `assetsSkipped` 以保持 schema compatibility，其业务含义固定为 unchanged/no-op；`assetsDeleted` 来自 `SnipeImportResult.DeletedAssets`。
+- `SyncStatusSnapshot` 的 `LastSuccessAt` 对每个完整执行的 run 前进；fatal/incomplete run 保留 `LastError`，不前进 `LastSuccessAt`。
+
+成功条件：完整 run 即使带失败条目也写 `Success` 并保留失败明细；阶段异常或取消即使已有成功计数也写 `Failed`；deleted/no-change count 可供 Worker/Tray 使用。
+
+## 2026-07 运行失败与资产失败分离
+
+- `FailureCount` 表示一次同步中 Atera Pull、Mapping/Reconstruction、Snipe Import 或资产操作产生的结构化 failure 总数。
+- `AssetsFailed` 只表示 `SnipeImportResult.FailedAssets`；当运行在导入前失败或没有 `ImportResult` 时必须为 0，不能用 run failure 数回填。
+- `DryRun` 是运行请求的固有属性，必须进入 `SyncRunResult` 并由 history、Worker IPC 和 notification 共用；不得通过是否生成 `ImportResult` 推断。
+- Atera 鉴权失败和 Mapping 异常必须记录运行失败，但不得声称存在失败资产。Snipe-IT 阶段级异常在没有结构化 asset result 时同样只算运行失败。
+
+成功条件：history、latest snapshot、IPC summary 和 notification body 对 `DryRun`、运行失败数和资产失败数采用同一口径。

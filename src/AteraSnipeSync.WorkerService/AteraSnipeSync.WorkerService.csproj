@@ -1,10 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-AteraSnipeSync.WorkerService-f110e24a-bdd5-4315-944f-732667b958f6</UserSecretsId>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeFrameworkVersion>10.0.10</RuntimeFrameworkVersion>
+    <!-- Align the self-contained runtime payload with TrayApp so both executables can safely share one MSI directory. -->
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,5 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AteraSnipeSync.Core\AteraSnipeSync.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
 </Project>

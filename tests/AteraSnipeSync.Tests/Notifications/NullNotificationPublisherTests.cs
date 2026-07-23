@@ -1,3 +1,4 @@
+using AteraSnipeSync.Core.Configuration;
 using AteraSnipeSync.Core.Notifications;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -13,7 +14,7 @@ public sealed class NullNotificationPublisherTests
     {
         var publisher = CreatePublisher();
 
-        await publisher.PublishAsync(CreateRequest(), CancellationToken.None);
+        await publisher.PublishAsync(CreateRequest(), Config(), CancellationToken.None);
     }
 
     [Fact]
@@ -22,7 +23,7 @@ public sealed class NullNotificationPublisherTests
         var publisher = CreatePublisher();
 
         await Assert.ThrowsAsync<ArgumentNullException>(
-            () => publisher.PublishAsync(null!, CancellationToken.None));
+            () => publisher.PublishAsync(null!, Config(), CancellationToken.None));
     }
 
     [Theory]
@@ -40,7 +41,7 @@ public sealed class NullNotificationPublisherTests
         var request = CreateRequest(eventType, severity, subject, message);
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => publisher.PublishAsync(request, CancellationToken.None));
+            () => publisher.PublishAsync(request, Config(), CancellationToken.None));
     }
 
     [Fact]
@@ -51,13 +52,16 @@ public sealed class NullNotificationPublisherTests
         await cts.CancelAsync();
 
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => publisher.PublishAsync(CreateRequest(), cts.Token));
+            () => publisher.PublishAsync(CreateRequest(), Config(), cts.Token));
     }
 
     private static NullNotificationPublisher CreatePublisher()
     {
         return new NullNotificationPublisher(NullLogger<NullNotificationPublisher>.Instance);
     }
+
+    private static NotificationConfig Config()
+        => new() { Enabled = false, OnEvents = [] };
 
     private static NotificationRequest CreateRequest(
         string eventType = NotificationEventTypes.SyncCompleted,
@@ -71,6 +75,7 @@ public sealed class NullNotificationPublisherTests
             Severity = severity,
             Subject = subject,
             Message = message,
+            Deleted = 0,
             SyncResult = null
         };
     }

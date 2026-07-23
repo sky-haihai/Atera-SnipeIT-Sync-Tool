@@ -5,11 +5,15 @@ using AteraSnipeSync.Core.SnipeIt;
 namespace AteraSnipeSync.Core.Sync;
 
 /// <summary>
-/// Reports the full outcome of one orchestrated sync run, including stage outputs and aggregated diagnostics.
+/// Reports whether one sync pipeline completed and preserves all stage outputs and record-level diagnostics.
 /// </summary>
 public sealed class SyncRunResult
 {
+    /// <summary>
+    /// Gets whether pull, mapping, and import completed normally; record-level failures do not make this false.
+    /// </summary>
     public required bool Success { get; init; }
+    public required bool DryRun { get; init; }
     public required DateTimeOffset StartedAt { get; init; }
     public required DateTimeOffset FinishedAt { get; init; }
     public required AteraPullResult? PullResult { get; init; }

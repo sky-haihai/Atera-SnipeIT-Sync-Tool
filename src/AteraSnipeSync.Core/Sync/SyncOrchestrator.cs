@@ -76,6 +76,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         AteraPullResult? pullResult = null;
         SnipeImportBatch? importBatch = null;
         SnipeImportResult? importResult = null;
+        var pipelineCompleted = false;
 
         _logger.LogInformation(
             "Starting sync run triggered by {TriggeredBy}. DryRun: {DryRun}.",
@@ -101,7 +102,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             failures.Add(ToStageFailure(AteraPullStage, exception));
             LogStageFailure(AteraPullStage, exception);
             ReportProgress(progress, $"Atera pull failed: {exception.Message}", percent: 100);
-            return CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
+            return CreateResult(request.Sync.DryRun, pipelineCompleted, startedAt, pullResult, importBatch, importResult, warnings, failures);
         }
 
         try
@@ -120,7 +121,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             failures.Add(ToStageFailure(ReconstructionStage, exception));
             LogStageFailure(ReconstructionStage, exception);
             ReportProgress(progress, $"Mapping failed: {exception.Message}", percent: 100);
-            return CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
+            return CreateResult(request.Sync.DryRun, pipelineCompleted, startedAt, pullResult, importBatch, importResult, warnings, failures);
         }
 
         try
@@ -133,6 +134,7 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
 
             AddWarningsDistinct(warnings, importResult.Warnings);
             failures.AddRange(importResult.Failures.Select(ToRunFailure));
+            pipelineCompleted = !importResult.Cancelled;
             ReportProgress(progress, "Snipe-IT import stage completed.", percent: 95);
         }
         catch (OperationCanceledException)
@@ -146,8 +148,8 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
             ReportProgress(progress, $"Snipe-IT import failed: {exception.Message}", percent: 100);
         }
 
-        var finalResult = CreateResult(startedAt, pullResult, importBatch, importResult, warnings, failures);
-        ReportProgress(progress, finalResult.Success ? "Sync run completed." : "Sync run completed with failures.", percent: 100);
+        var finalResult = CreateResult(request.Sync.DryRun, pipelineCompleted, startedAt, pullResult, importBatch, importResult, warnings, failures);
+        ReportProgress(progress, finalResult.Success ? "Sync run completed." : "Sync run failed before completion.", percent: 100);
         return finalResult;
     }
 
@@ -164,7 +166,12 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
         });
     }
 
+    /// <summary>
+    /// Builds the terminal run result while keeping pipeline completion separate from record-level diagnostics.
+    /// </summary>
     private SyncRunResult CreateResult(
+        bool dryRun,
+        bool pipelineCompleted,
         DateTimeOffset startedAt,
         AteraPullResult? pullResult,
         SnipeImportBatch? importBatch,
@@ -174,7 +181,8 @@ public sealed class SyncOrchestrator : ISyncOrchestrator
     {
         var result = new SyncRunResult
         {
-            Success = failures.Count == 0,
+            Success = pipelineCompleted,
+            DryRun = dryRun,
             StartedAt = startedAt,
             FinishedAt = _timeProvider.GetUtcNow(),
             PullResult = pullResult,

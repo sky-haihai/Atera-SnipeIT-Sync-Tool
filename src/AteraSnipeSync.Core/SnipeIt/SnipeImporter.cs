@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AteraSnipeSync.Core.Common;
@@ -13,20 +11,24 @@ namespace AteraSnipeSync.Core.SnipeIt;
 /// <summary>
 /// Imports mapped assets into Snipe-IT by resolving dependencies, planning writes, and issuing mutations only after preflight gates pass.
 /// </summary>
-public sealed class SnipeImporter : ISnipeImporter
+public sealed partial class SnipeImporter : ISnipeImporter
 {
     private const int HardwareSnapshotPageSize = 500;
     private const int ModelSnapshotPageSize = 500;
     private const int MaximumErrorDetailLength = 2000;
     private const string AssetCategoryType = "asset";
+    private const string AteraAssetTagPrefix = "ATERA-";
+    private const string MissingFromAteraReason = "MissingFromAtera";
     private const string FirstAddedNotePrefix = "First added by Atera-SnipeIT Sync Tool at ";
-    private const int MaximumSnapshotPages = 10000;
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private const string AutoSyncedNotePrefix = "Auto Synced from Atera at ";
     private static readonly Regex CustomFieldDbColumnPattern = new(
         "^_snipeit_[a-z0-9_]+$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private readonly HttpClient _httpClient;
+    private readonly SnipeApiClient _apiClient;
+    private readonly SnipeSnapshotLoader _snapshotLoader;
+    private readonly SnipeImportPlanner _planner;
+    private readonly SnipeImportExecutor _writeExecutor;
     private readonly ILogger<SnipeImporter> _logger;
     private readonly TimeProvider _timeProvider;
 
@@ -41,7 +43,10 @@ public sealed class SnipeImporter : ISnipeImporter
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(timeProvider);
 
-        _httpClient = httpClient;
+        _apiClient = new SnipeApiClient(httpClient, timeProvider);
+        _snapshotLoader = new SnipeSnapshotLoader(_apiClient, EnsureBusinessSuccess);
+        _planner = new SnipeImportPlanner(this);
+        _writeExecutor = new SnipeImportExecutor(this);
         _logger = logger;
         _timeProvider = timeProvider;
     }
@@ -61,6 +66,7 @@ public sealed class SnipeImporter : ISnipeImporter
 
         var context = new ImportRunContext(options, []);
         var plannedRecords = new List<PlannedRecord>();
+        var plannedDeletions = new List<PlannedAssetDeletion>();
         var validRecords = new List<SnipeAssetImportRecord>();
         _logger.LogInformation("Starting Snipe-IT import for {AssetCount} asset(s).", batch.Assets.Count);
         ReportProgress(progress, $"Starting Snipe-IT planning for {batch.Assets.Count} asset(s).", current: 0, total: batch.Assets.Count);
@@ -106,78 +112,26 @@ public sealed class SnipeImporter : ISnipeImporter
                 }
             }
 
-            var referencePlans = await PlanReferencesAsync(validRecords, context, progress, cancellationToken).ConfigureAwait(false);
-        var matchableRecords = new List<(SnipeAssetImportRecord Record, int Current)>();
-        for (var index = 0; index < validRecords.Count; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var record = validRecords[index];
-            var current = index + 1;
-            if (TryGetReferenceFailure(record, referencePlans, out var failureCode, out var failureMessage))
-            {
-                context.AddFailure(record, failureCode, failureMessage);
-                ReportProgress(progress, $"Blocked Snipe-IT asset {current}/{validRecords.Count}: {failureCode}.", current, validRecords.Count);
-                continue;
-            }
-
-            matchableRecords.Add((record, current));
-        }
-
-        var hardwareLookup = SnipeHardwareLookup.Empty;
-        if (matchableRecords.Count > 0)
-        {
-            try
-            {
-                hardwareLookup = await LoadHardwareLookupAsync(
-                    context.Options,
-                    context.IgnoredMacAddresses,
-                    progress,
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (SnipeApiException exception)
-            {
-                foreach (var (record, current) in matchableRecords)
-                {
-                    context.AddFailure(record, exception.Code, exception.Message);
-                    ReportProgress(progress, $"Blocked Snipe-IT asset {current}/{validRecords.Count}: {exception.Code}.", current, validRecords.Count);
-                }
-
-                matchableRecords.Clear();
-            }
-        }
-
-        foreach (var (record, current) in matchableRecords)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            ReportProgress(progress, $"Matching Snipe-IT asset {current}/{validRecords.Count}: {record.Name}.", current - 1, validRecords.Count);
-
-            try
-            {
-                var existingAsset = FindExistingAsset(record, context, hardwareLookup);
-                plannedRecords.Add(CreatePlannedRecord(record, referencePlans, existingAsset));
-                ReportProgress(progress, $"Planned Snipe-IT asset {current}/{validRecords.Count}: {record.Name}.", current, validRecords.Count);
-            }
-            catch (SnipeApiException exception)
-            {
-                context.AddFailure(record, exception.Code, exception.Message);
-                ReportProgress(progress, $"Blocked Snipe-IT asset {current}/{validRecords.Count}: {exception.Code}.", current, validRecords.Count);
-            }
-            catch (JsonException exception)
-            {
-                context.AddFailure(record, "SnipeImport.MalformedResponse", $"Snipe-IT response could not be parsed: {exception.Message}");
-                ReportProgress(progress, $"Blocked Snipe-IT asset {current}/{validRecords.Count}: malformed response.", current, validRecords.Count);
-            }
-        }
+            var planningResult = await _planner.PlanAssetsAsync(
+                batch.Assets,
+                validRecords,
+                context,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+            plannedRecords.AddRange(planningResult.Assets);
+            plannedDeletions.AddRange(planningResult.Deletions);
 
             BlockDuplicateTargetReservations(plannedRecords, context);
+            if (context.Failures.Count > 0)
+            {
+                plannedDeletions.Clear();
+            }
             context.RetainReferencesFor(plannedRecords);
 
         if (options.ManualPreflightCsvEnabled)
         {
             ReportProgress(progress, "Writing manual preflight CSV files.", batch.Assets.Count, batch.Assets.Count);
-            if (!await TryWritePreflightCsvAsync(plannedRecords, context, cancellationToken).ConfigureAwait(false))
+            if (!await TryWritePreflightCsvAsync(plannedRecords, plannedDeletions, context, cancellationToken).ConfigureAwait(false))
             {
                 ReportProgress(progress, "Manual preflight CSV write failed; import stopped before writes.", batch.Assets.Count, batch.Assets.Count);
                 return context.ToResult();
@@ -189,50 +143,34 @@ public sealed class SnipeImporter : ISnipeImporter
         if (options.DryRun)
         {
             ReportProgress(progress, "Applying dry-run plan without Snipe-IT writes.", batch.Assets.Count, batch.Assets.Count);
-            ApplyDryRunPlan(plannedRecords, context);
+            ApplyDryRunPlan(plannedRecords, plannedDeletions, context);
             ReportProgress(progress, "Completed Snipe-IT dry-run planning.", batch.Assets.Count, batch.Assets.Count);
             return context.ToResult();
         }
 
-        if (!await TryExecuteReferencePlanAsync(plannedRecords, context, progress, cancellationToken).ConfigureAwait(false))
+        if (!await _writeExecutor.ExecuteReferencesAsync(
+                plannedRecords,
+                context,
+                progress,
+                cancellationToken).ConfigureAwait(false))
         {
             ReportProgress(progress, "Reference creation failed; import stopped before asset writes.", batch.Assets.Count, batch.Assets.Count);
             return context.ToResult();
         }
 
-        for (var index = 0; index < plannedRecords.Count; index++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var plannedRecord = plannedRecords[index];
-            var current = index + 1;
-            ReportProgress(progress, $"Executing Snipe-IT asset {current}/{plannedRecords.Count}: {plannedRecord.Record.Name}.", current - 1, plannedRecords.Count);
-
-            try
-            {
-                await ExecutePlanAsync(plannedRecord, context, cancellationToken).ConfigureAwait(false);
-                ReportProgress(progress, $"Executed Snipe-IT asset {current}/{plannedRecords.Count}: {plannedRecord.Record.Name}.", current, plannedRecords.Count);
-            }
-            catch (SnipeApiException exception)
-            {
-                context.AddFailure(plannedRecord.Record, exception.Code, exception.Message);
-                ReportProgress(progress, $"Failed Snipe-IT asset {current}/{plannedRecords.Count}: {exception.Code}.", current, plannedRecords.Count);
-            }
-            catch (JsonException exception)
-            {
-                context.AddFailure(plannedRecord.Record, "SnipeImport.MalformedResponse", $"Snipe-IT response could not be parsed: {exception.Message}");
-                ReportProgress(progress, $"Failed Snipe-IT asset {current}/{plannedRecords.Count}: malformed response.", current, plannedRecords.Count);
-            }
-        }
+        await _writeExecutor.ExecuteAssetsAsync(plannedRecords, context, progress, cancellationToken).ConfigureAwait(false);
+        await _writeExecutor.ExecuteDeletionsAsync(plannedDeletions, context, progress, cancellationToken).ConfigureAwait(false);
 
         cancellationToken.ThrowIfCancellationRequested();
         _logger.LogInformation(
-            "Completed Snipe-IT import. Created={CreatedAssets}, Updated={UpdatedAssets}, Failed={FailedAssets}.",
+            "Completed Snipe-IT import. Created={CreatedAssets}, Updated={UpdatedAssets}, Deleted={DeletedAssets}, Failed={FailedAssets}.",
             context.CreatedAssets,
             context.UpdatedAssets,
+            context.DeletedAssets,
             context.FailedAssets);
 
-        ReportProgress(progress, "Completed Snipe-IT import.", plannedRecords.Count, plannedRecords.Count);
+        var completedOperationCount = plannedRecords.Count + plannedDeletions.Count;
+        ReportProgress(progress, "Completed Snipe-IT import.", completedOperationCount, completedOperationCount);
             return context.ToResult();
         }
         catch (OperationCanceledException) when (context.HasExecutedWrites)
@@ -254,67 +192,82 @@ public sealed class SnipeImporter : ISnipeImporter
         IProgress<SyncProgressUpdate>? progress,
         CancellationToken cancellationToken)
     {
-        var assets = new List<SnipeAssetMatch>();
-        int? total = null;
-        var offset = 0;
-        var page = 1;
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ReportProgress(progress, $"Loading Snipe-IT hardware snapshot page {page}.", assets.Count, total);
-
-            var relativePath = BuildPath(
-                "hardware",
-                new Dictionary<string, string>
-                {
-                    ["limit"] = HardwareSnapshotPageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["offset"] = offset.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                });
-            var operation = $"Load hardware snapshot page {page}";
-
-            using var document = await SendJsonAsync(
-                HttpMethod.Get,
-                relativePath,
-                payload: null,
-                operation,
-                options,
-                cancellationToken).ConfigureAwait(false);
-
-            EnsureBusinessSuccess(document.RootElement, HttpMethod.Get, relativePath, operation);
-
-            total ??= ReadTotal(document.RootElement);
-            var pageRows = ParseRows(document.RootElement, operation);
-            var pageAssets = pageRows.Select(row => ParseAsset(row)
-                    ?? throw new SnipeApiException(
-                        "SnipeImport.MalformedResponse",
-                        $"{operation} returned a hardware row without a valid id."))
-                .ToList();
-
-            assets.AddRange(pageAssets);
-            if (pageAssets.Count == 0)
-            {
-                break;
-            }
-
-            offset += pageRows.Count;
-            if (total is { } expectedTotal && offset >= expectedTotal)
-            {
-                break;
-            }
-
-            page++;
-            if (page > MaximumSnapshotPages)
-            {
-                throw new SnipeApiException("SnipeImport.MalformedResponse", "Hardware snapshot exceeded the maximum safe page count.");
-            }
-        }
-
-        ReportProgress(progress, $"Loaded Snipe-IT hardware snapshot with {assets.Count} asset(s).", assets.Count, total ?? assets.Count);
+        var snapshot = await _snapshotLoader.LoadPagedRowsAsync(
+            "hardware",
+            HardwareSnapshotPageSize,
+            "hardware",
+            options,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+        var assets = snapshot.Rows.Select(row => ParseAsset(row)
+                ?? throw new SnipeApiException(
+                    "SnipeImport.MalformedResponse",
+                    "Hardware snapshot returned a row without a valid id."))
+            .ToList();
+        ReportProgress(
+            progress,
+            $"Loaded Snipe-IT hardware snapshot with {assets.Count} asset(s).",
+            assets.Count,
+            snapshot.Total ?? assets.Count);
         return SnipeHardwareLookup.Create(
             assets,
             options.MacAddressCustomFieldDbColumnName,
             ignoredMacAddresses);
+    }
+
+    /// <summary>
+    /// Selects Snipe-IT hardware owned by the ATERA- asset-tag namespace whose complete tag is absent from this pull.
+    /// Source records are considered before validation so a temporarily blocked record cannot cause an accidental delete.
+    /// </summary>
+    private static IReadOnlyList<PlannedAssetDeletion> PlanStaleAssetDeletions(
+        IReadOnlyList<SnipeAssetImportRecord> allRecords,
+        SnipeHardwareLookup hardwareLookup)
+    {
+        var activeAssetTags = allRecords
+            .Select(record => Normalize(record.AssetTag))
+            .Where(assetTag => assetTag is not null)
+            .Select(assetTag => assetTag!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var deletions = new List<PlannedAssetDeletion>();
+
+        foreach (var asset in hardwareLookup.Assets)
+        {
+            if (!TryReadAteraManagedAssetTag(asset.AssetTag, out var normalizedAssetTag, out var ateraAgentId)
+                || activeAssetTags.Contains(normalizedAssetTag))
+            {
+                continue;
+            }
+
+            deletions.Add(new PlannedAssetDeletion(asset, ateraAgentId, MissingFromAteraReason));
+        }
+
+        return deletions
+            .OrderBy(deletion => deletion.Asset.Id)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Applies the operator-owned ATERA- tag namespace and extracts its safe audit identifier.
+    /// </summary>
+    private static bool TryReadAteraManagedAssetTag(
+        string? assetTag,
+        out string normalizedAssetTag,
+        out string ateraAgentId)
+    {
+        normalizedAssetTag = Normalize(assetTag) ?? string.Empty;
+        if (!normalizedAssetTag.StartsWith(AteraAssetTagPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            ateraAgentId = string.Empty;
+            return false;
+        }
+
+        ateraAgentId = normalizedAssetTag[AteraAssetTagPrefix.Length..].Trim();
+        if (ateraAgentId.Length == 0)
+        {
+            ateraAgentId = "<missing>";
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -325,61 +278,23 @@ public sealed class SnipeImporter : ISnipeImporter
         IProgress<SyncProgressUpdate>? progress,
         CancellationToken cancellationToken)
     {
-        var models = new List<SnipeModel>();
-        int? total = null;
-        var offset = 0;
-        var page = 1;
-
-        while (true)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            ReportProgress(progress, $"Loading Snipe-IT model snapshot page {page}.", models.Count, total);
-
-            var relativePath = BuildPath(
-                "models",
-                new Dictionary<string, string>
-                {
-                    ["limit"] = ModelSnapshotPageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["offset"] = offset.ToString(System.Globalization.CultureInfo.InvariantCulture)
-                });
-            var operation = $"Load model snapshot page {page}";
-
-            using var document = await SendJsonAsync(
-                HttpMethod.Get,
-                relativePath,
-                payload: null,
-                operation,
-                options,
-                cancellationToken).ConfigureAwait(false);
-
-            EnsureBusinessSuccess(document.RootElement, HttpMethod.Get, relativePath, operation);
-
-            total ??= ReadTotal(document.RootElement);
-            var pageRows = ParseRows(document.RootElement, operation);
-            models.AddRange(pageRows.Select(row => ParseModel(row)
+        var snapshot = await _snapshotLoader.LoadPagedRowsAsync(
+            "models",
+            ModelSnapshotPageSize,
+            "model",
+            options,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+        var models = snapshot.Rows.Select(row => ParseModel(row)
                 ?? throw new SnipeApiException(
                     "SnipeImport.MalformedResponse",
-                    $"{operation} returned a model row without required id, name, or category id.")));
-
-            if (pageRows.Count == 0)
-            {
-                break;
-            }
-
-            offset += pageRows.Count;
-            if (total is { } expectedTotal && offset >= expectedTotal)
-            {
-                break;
-            }
-
-            page++;
-            if (page > MaximumSnapshotPages)
-            {
-                throw new SnipeApiException("SnipeImport.MalformedResponse", "Model snapshot exceeded the maximum safe page count.");
-            }
-        }
-
-        ReportProgress(progress, $"Loaded Snipe-IT model snapshot with {models.Count} model(s).", models.Count, total ?? models.Count);
+                    "Model snapshot returned a row without required id, name, or category id."))
+            .ToList();
+        ReportProgress(
+            progress,
+            $"Loaded Snipe-IT model snapshot with {models.Count} model(s).",
+            models.Count,
+            snapshot.Total ?? models.Count);
         return SnipeModelLookup.Create(models);
     }
 
@@ -402,25 +317,13 @@ public sealed class SnipeImporter : ISnipeImporter
         const string operation = "Load custom Fieldset snapshot";
         ReportProgress(progress, $"Resolving Snipe-IT MAC Fieldset '{fieldsetName}'.", 0, null);
 
-        using var document = await SendJsonAsync(
-            HttpMethod.Get,
+        var snapshot = await _snapshotLoader.LoadSinglePageRowsAsync(
             relativePath,
-            payload: null,
             operation,
+            "SnipeImport.IncompleteFieldsetSnapshot",
             options,
             cancellationToken).ConfigureAwait(false);
-        EnsureBusinessSuccess(document.RootElement, HttpMethod.Get, relativePath, operation);
-
-        var rows = ParseRows(document.RootElement, operation);
-        var total = ReadTotal(document.RootElement);
-        if (total is not null && total.Value != rows.Count)
-        {
-            throw new SnipeApiException(
-                "SnipeImport.IncompleteFieldsetSnapshot",
-                $"{operation} returned {rows.Count} row(s) but reported total {total.Value}.");
-        }
-
-        var fieldsets = rows.Select(ParseFieldset).ToList();
+        var fieldsets = snapshot.Rows.Select(ParseFieldset).ToList();
         var matches = fieldsets
             .Where(fieldset => NamesEqual(fieldsetName, fieldset.Name))
             .GroupBy(fieldset => fieldset.Id)
@@ -460,40 +363,8 @@ public sealed class SnipeImporter : ISnipeImporter
         IProgress<SyncProgressUpdate>? progress,
         CancellationToken cancellationToken)
     {
-        const string relativePath = "companies";
-        const string operation = "Load company snapshot";
-        ReportProgress(progress, "Loading Snipe-IT company snapshot.", current: 0, total: null);
-
-        using var document = await SendJsonAsync(
-            HttpMethod.Get,
-            relativePath,
-            payload: null,
-            operation,
-            options,
-            cancellationToken).ConfigureAwait(false);
-
-        EnsureBusinessSuccess(document.RootElement, HttpMethod.Get, relativePath, operation);
-        var rows = ParseRows(document.RootElement, operation);
-        var total = ReadTotal(document.RootElement)
-            ?? throw new SnipeApiException(
-                "SnipeImport.MalformedResponse",
-                $"{operation} returned JSON without the required total count.");
-        if (total != rows.Count)
-        {
-            throw new SnipeApiException(
-                "SnipeImport.IncompleteCompanySnapshot",
-                $"{operation} returned {rows.Count} company row(s) but reported total {total}; the complete company list was not loaded.");
-        }
-
-        var companies = rows
-            .Select(row => ParseEntity(row)
-                ?? throw new SnipeApiException(
-                    "SnipeImport.MalformedResponse",
-                    $"{operation} returned a company row without a valid id or name."))
-            .ToList();
-
-        ReportProgress(progress, $"Loaded Snipe-IT company snapshot with {companies.Count} company(s).", companies.Count, total);
-        return SnipeCompanyLookup.Create(companies);
+        var companies = await _snapshotLoader.LoadCompaniesAsync(options, progress, cancellationToken).ConfigureAwait(false);
+        return SnipeCompanyLookup.Create(companies.Select(company => new SnipeEntity(company.Id, company.Name)));
     }
 
     /// <summary>
@@ -969,7 +840,8 @@ public sealed class SnipeImporter : ISnipeImporter
     private static PlannedRecord CreatePlannedRecord(
         SnipeAssetImportRecord record,
         ReferencePlans referencePlans,
-        SnipeAssetMatch? existingAsset)
+        SnipeAssetMatch? existingAsset,
+        ImportRunContext context)
     {
         var companyPlan = referencePlans.Companies[BuildReferenceKey(record.CompanyName)].Value!;
         var categoryPlan = referencePlans.Categories[BuildReferenceKey(record.CategoryName)].Value!;
@@ -977,14 +849,96 @@ public sealed class SnipeImporter : ISnipeImporter
         var modelKey = BuildModelReferenceKey(record.ModelName, categoryPlan, manufacturerPlan.ManufacturerId);
         var modelPlan = referencePlans.Models[modelKey].Value!;
 
-        return new PlannedRecord(
+        var plannedRecord = new PlannedRecord(
             record,
             companyPlan.CompanyId,
             companyPlan.CompanyCreate,
             manufacturerPlan.ManufacturerId,
             modelPlan.ModelId,
             modelPlan.ModelCreate,
-            existingAsset);
+            existingAsset,
+            []);
+
+        return existingAsset is null
+            ? plannedRecord
+            : plannedRecord with { ChangeReasons = BuildAssetChangeReasons(plannedRecord, context) };
+    }
+
+    /// <summary>
+    /// Compares the business values managed by the hardware payload and returns stable field labels for every real change.
+    /// Missing snapshot values are treated as changed so an incomplete comparison cannot suppress a required update.
+    /// </summary>
+    private static IReadOnlyList<string> BuildAssetChangeReasons(
+        PlannedRecord plannedRecord,
+        ImportRunContext context)
+    {
+        var record = plannedRecord.Record;
+        var existingAsset = plannedRecord.ExistingAsset!;
+        var reasons = new List<string>(8);
+
+        if (!PayloadTextEquals(record.AssetTag, existingAsset.AssetTag))
+        {
+            reasons.Add("AssetTag");
+        }
+
+        if (existingAsset.StatusId != record.StatusId)
+        {
+            reasons.Add("Status");
+        }
+
+        if (plannedRecord.ModelCreate is not null
+            || plannedRecord.ModelId is null
+            || existingAsset.ModelId != plannedRecord.ModelId)
+        {
+            reasons.Add("Model");
+        }
+
+        if (plannedRecord.CompanyCreate is not null
+            || (plannedRecord.CompanyId is not null && existingAsset.CompanyId != plannedRecord.CompanyId))
+        {
+            reasons.Add("Company");
+        }
+
+        if (!PayloadTextEquals(record.Name, existingAsset.Name))
+        {
+            reasons.Add("Name");
+        }
+
+        if (record.SerialIsReliableIdentity
+            && HardwareIdentityNormalizer.NormalizeSerial(record.Serial) is { } targetSerial
+            && !string.Equals(
+                targetSerial,
+                HardwareIdentityNormalizer.NormalizeSerial(existingAsset.Serial),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            reasons.Add("Serial");
+        }
+
+        if (Normalize(context.Options.MacAddressCustomFieldDbColumnName) is { } macFieldName
+            && SelectPayloadMacAddress(record, context.IgnoredMacAddresses) is { } targetMac
+            && (!existingAsset.CustomFields.TryGetValue(macFieldName, out var existingMac)
+                || !string.Equals(
+                    MacAddressNormalizer.NormalizeComparable(targetMac),
+                    MacAddressNormalizer.NormalizeComparable(existingMac),
+                    StringComparison.OrdinalIgnoreCase)))
+        {
+            reasons.Add("MacAddress");
+        }
+
+        if (!string.Equals(
+                NormalizeBusinessNotes(record.Notes),
+                NormalizeBusinessNotes(existingAsset.Notes),
+                StringComparison.Ordinal))
+        {
+            reasons.Add("Notes");
+        }
+
+        return reasons;
+    }
+
+    private static bool PayloadTextEquals(string? target, string? existing)
+    {
+        return string.Equals(Normalize(target), Normalize(existing), StringComparison.Ordinal);
     }
 
     private static Dictionary<string, List<SnipeAssetImportRecord>> GroupRecordsByReference(
@@ -1364,6 +1318,7 @@ public sealed class SnipeImporter : ISnipeImporter
 
     private static void ApplyDryRunPlan(
         IReadOnlyList<PlannedRecord> plannedRecords,
+        IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
         ImportRunContext context)
     {
         foreach (var company in context.PlannedCompanies)
@@ -1403,6 +1358,12 @@ public sealed class SnipeImporter : ISnipeImporter
                 continue;
             }
 
+            if (!plannedRecord.RequiresAssetWrite)
+            {
+                context.AddSkippedAsset(plannedRecord);
+                continue;
+            }
+
             context.AddPlannedAction(
                 "Update",
                 "Asset",
@@ -1410,6 +1371,29 @@ public sealed class SnipeImporter : ISnipeImporter
                 $"Asset '{plannedRecord.Record.Name}' matched Snipe-IT asset id {plannedRecord.ExistingAsset.Id}.");
             context.UpdatedAssets++;
         }
+
+        foreach (var deletion in plannedDeletions)
+        {
+            context.AddPlannedAction(
+                "Delete",
+                "Asset",
+                deletion.Asset.AssetTag ?? deletion.Asset.Name,
+                BuildDeletionAuditMessage(deletion),
+                deletion.Asset.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            context.DeletedAssets++;
+        }
+    }
+
+    /// <summary>
+    /// Builds the bounded, non-secret identity detail used by delete actions, failures, and history.
+    /// </summary>
+    private static string BuildDeletionAuditMessage(PlannedAssetDeletion deletion)
+    {
+        return $"AssetId={deletion.Asset.Id}; "
+            + $"AssetTag={SanitizeProgressValue(deletion.Asset.AssetTag ?? "<missing>")}; "
+            + $"Name={SanitizeProgressValue(deletion.Asset.Name)}; "
+            + $"AteraAgentId={SanitizeProgressValue(deletion.AteraAgentId)}; "
+            + $"Reason={deletion.Reason}.";
     }
 
     private async Task ExecutePlanAsync(
@@ -1431,7 +1415,20 @@ public sealed class SnipeImporter : ISnipeImporter
             return;
         }
 
-        await UpdateAssetAsync(plannedRecord.Record, plannedRecord.ExistingAsset, modelId.Value, companyId, context, cancellationToken).ConfigureAwait(false);
+        if (!plannedRecord.RequiresAssetWrite)
+        {
+            context.AddSkippedAsset(plannedRecord);
+            return;
+        }
+
+        await UpdateAssetAsync(
+            plannedRecord.Record,
+            plannedRecord.ExistingAsset,
+            modelId.Value,
+            companyId,
+            plannedRecord.ChangeReasons,
+            context,
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> TryExecuteReferencePlanAsync(
@@ -1834,6 +1831,7 @@ public sealed class SnipeImporter : ISnipeImporter
         SnipeAssetMatch existingAsset,
         int modelId,
         int? companyId,
+        IReadOnlyList<string> changeReasons,
         ImportRunContext context,
         CancellationToken cancellationToken)
     {
@@ -1856,23 +1854,71 @@ public sealed class SnipeImporter : ISnipeImporter
             context.Options,
             cancellationToken).ConfigureAwait(false);
         EnsureBusinessSuccess(document.RootElement, HttpMethod.Patch, relativePath, operation);
+        var changedFields = string.Join(", ", changeReasons);
+        _logger.LogInformation(
+            "Updated Snipe-IT asset {AssetId} ({AssetTag}). Changed fields: {ChangedFields}.",
+            existingAsset.Id,
+            record.AssetTag,
+            changedFields);
         context.AddExecutedAction(
             "Update",
             "Asset",
             existingAsset.AssetTag ?? existingAsset.Name,
-            $"Asset '{record.Name}' updated Snipe-IT asset id {existingAsset.Id}.");
+            $"Asset '{record.Name}' updated Snipe-IT asset id {existingAsset.Id}. Changed fields: {changedFields}.");
         context.UpdatedAssets++;
+    }
+
+    /// <summary>
+    /// Soft-deletes one stale Atera-managed Snipe-IT asset and records a successful mutation only after both
+    /// transport and business-envelope checks pass. DELETE mutations are never automatically replayed.
+    /// </summary>
+    private async Task DeleteAssetAsync(
+        PlannedAssetDeletion deletion,
+        ImportRunContext context,
+        CancellationToken cancellationToken)
+    {
+        var relativePath = $"hardware/{deletion.Asset.Id}";
+        var safeAssetTag = SanitizeProgressValue(deletion.Asset.AssetTag ?? "<missing>");
+        var safeAssetName = SanitizeProgressValue(deletion.Asset.Name);
+        var safeAgentId = SanitizeProgressValue(deletion.AteraAgentId);
+        var operation = $"Delete Asset '{safeAssetTag}'";
+
+        using var document = await SendJsonAsync(
+            HttpMethod.Delete,
+            relativePath,
+            null,
+            operation,
+            context.Options,
+            cancellationToken).ConfigureAwait(false);
+        EnsureBusinessSuccess(document.RootElement, HttpMethod.Delete, relativePath, operation);
+
+        _logger.LogInformation(
+            "Deleted stale Atera-managed Snipe-IT asset {AssetId} ({AssetTag}, {AssetName}, Atera agent {AteraAgentId}). Reason={DeleteReason}; Result={DeleteResult}.",
+            deletion.Asset.Id,
+            safeAssetTag,
+            safeAssetName,
+            safeAgentId,
+            deletion.Reason,
+            "Succeeded");
+        context.AddExecutedAction(
+            "Delete",
+            "Asset",
+            deletion.Asset.AssetTag ?? deletion.Asset.Name,
+            BuildDeletionAuditMessage(deletion),
+            deletion.Asset.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        context.DeletedAssets++;
     }
 
     private async Task<bool> TryWritePreflightCsvAsync(
         IReadOnlyList<PlannedRecord> plannedRecords,
+        IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
         ImportRunContext context,
         CancellationToken cancellationToken)
     {
         try
         {
             await SnipeImportPreflightCsvWriter.WriteAsync(
-                BuildPreflightPlan(plannedRecords, context),
+                BuildPreflightPlan(plannedRecords, plannedDeletions, context),
                 context.Options.ManualPreflightCsvDirectory!,
                 cancellationToken).ConfigureAwait(false);
             return true;
@@ -1888,28 +1934,53 @@ public sealed class SnipeImporter : ISnipeImporter
 
     private static SnipeImportPreflightPlan BuildPreflightPlan(
         IReadOnlyList<PlannedRecord> plannedRecords,
+        IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
         ImportRunContext context)
     {
         return new SnipeImportPreflightPlan
         {
-            Assets = plannedRecords.Select(plannedRecord => new SnipeAssetPreflightRow(
-                plannedRecord.ExistingAsset is null ? "Add" : "Modify",
-                plannedRecord.Record.AssetTag,
-                plannedRecord.Record.Name,
-                HardwareIdentityNormalizer.NormalizeSerial(plannedRecord.Record.Serial),
-                FormatMacAddresses(plannedRecord.Record),
-                plannedRecord.Record.CompanyName,
-                plannedRecord.Record.ModelName,
-                plannedRecord.Record.CategoryName,
-                plannedRecord.Record.ManufacturerName,
-                plannedRecord.ExistingAsset?.Id,
-                plannedRecord.ExistingAsset?.AssetTag,
-                ConflictingFields: null,
-                ConflictingValue: null,
-                ConflictingAssets: null,
-                FailureCode: null,
-                FailureMessage: null,
-                DeviceType: plannedRecord.Record.DeviceType))
+            Assets = plannedRecords
+                .Where(plannedRecord => plannedRecord.RequiresAssetWrite)
+                .Select(plannedRecord => new SnipeAssetPreflightRow(
+                    plannedRecord.ExistingAsset is null ? "Add" : "Modify",
+                    plannedRecord.Record.AssetTag,
+                    plannedRecord.Record.Name,
+                    HardwareIdentityNormalizer.NormalizeSerial(plannedRecord.Record.Serial),
+                    FormatMacAddresses(plannedRecord.Record),
+                    plannedRecord.Record.CompanyName,
+                    plannedRecord.Record.ModelName,
+                    plannedRecord.Record.CategoryName,
+                    plannedRecord.Record.ManufacturerName,
+                    plannedRecord.ExistingAsset?.Id,
+                    plannedRecord.ExistingAsset?.AssetTag,
+                    ConflictingFields: null,
+                    ConflictingValue: null,
+                    ConflictingAssets: null,
+                    FailureCode: null,
+                    FailureMessage: null,
+                    ChangeReasons: plannedRecord.ExistingAsset is null
+                        ? "Create"
+                        : string.Join("; ", plannedRecord.ChangeReasons),
+                    DeviceType: plannedRecord.Record.DeviceType))
+                .Concat(plannedDeletions.Select(deletion => new SnipeAssetPreflightRow(
+                    "Delete",
+                    deletion.Asset.AssetTag ?? "<missing>",
+                    deletion.Asset.Name,
+                    HardwareIdentityNormalizer.NormalizeSerial(deletion.Asset.Serial),
+                    string.Empty,
+                    deletion.Asset.CompanyName ?? string.Empty,
+                    deletion.Asset.ModelName ?? string.Empty,
+                    deletion.Asset.CategoryName ?? string.Empty,
+                    string.Empty,
+                    ExistingAssetId: deletion.Asset.Id,
+                    ExistingAssetTag: deletion.Asset.AssetTag,
+                    ConflictingFields: null,
+                    ConflictingValue: null,
+                    ConflictingAssets: null,
+                    FailureCode: null,
+                    FailureMessage: null,
+                    ChangeReasons: deletion.Reason,
+                    DeviceType: null)))
                 .Concat(context.FailedPreflightAssets)
                 .ToList(),
             Companies = context.PlannedCompanies
@@ -2018,7 +2089,7 @@ public sealed class SnipeImporter : ISnipeImporter
                 $"{DescribeRequest(operation, HttpMethod.Post, path)} failed: Snipe-IT reported success but did not include an id.");
     }
 
-    private async Task<JsonDocument> SendJsonAsync(
+    private Task<JsonDocument> SendJsonAsync(
         HttpMethod method,
         string relativePath,
         object? payload,
@@ -2026,148 +2097,7 @@ public sealed class SnipeImporter : ISnipeImporter
         SnipeImportOptions options,
         CancellationToken cancellationToken)
     {
-        var serializedPayload = payload is null ? null : JsonSerializer.Serialize(payload, JsonOptions);
-        var maxAttempts = method == HttpMethod.Get ? options.MaxReadRetryAttempts + 1 : 1;
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var requestCancellationToken = method == HttpMethod.Get ? cancellationToken : CancellationToken.None;
-            using var request = CreateRequest(method, relativePath, serializedPayload, options);
-
-            try
-            {
-                using var response = await _httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    requestCancellationToken).ConfigureAwait(false);
-
-                if (attempt + 1 < maxAttempts && IsRetryableStatus(response.StatusCode))
-                {
-                    await DelayBeforeRetryAsync(response, options, attempt, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                var content = await response.Content.ReadAsStringAsync(requestCancellationToken).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorDetail = TryReadErrorDetails(content, out var hasValidationDetails);
-                    var code = ClassifyHttpFailure(response.StatusCode, hasValidationDetails);
-                    var reason = string.IsNullOrWhiteSpace(response.ReasonPhrase)
-                        ? $"HTTP {(int)response.StatusCode}"
-                        : $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}";
-                    var detailSuffix = errorDetail is null ? string.Empty : $" Detail: {errorDetail}";
-                    throw new SnipeApiException(
-                        code,
-                        $"{DescribeRequest(operation, method, relativePath)} failed: Snipe-IT returned {reason}.{detailSuffix}");
-                }
-
-                try
-                {
-                    return JsonDocument.Parse(string.IsNullOrWhiteSpace(content) ? "{}" : content);
-                }
-                catch (JsonException exception)
-                {
-                    throw new SnipeApiException(
-                        "SnipeImport.MalformedResponse",
-                        $"{DescribeRequest(operation, method, relativePath)} failed: Snipe-IT returned malformed JSON.",
-                        exception);
-                }
-            }
-            catch (OperationCanceledException exception) when (!requestCancellationToken.IsCancellationRequested)
-            {
-                if (attempt + 1 < maxAttempts)
-                {
-                    await DelayBeforeRetryAsync(response: null, options, attempt, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                throw new SnipeApiException(
-                    "SnipeImport.Timeout",
-                    $"{DescribeRequest(operation, method, relativePath)} failed: the Snipe-IT request timed out.",
-                    exception);
-            }
-            catch (HttpRequestException exception)
-            {
-                if (attempt + 1 < maxAttempts)
-                {
-                    await DelayBeforeRetryAsync(response: null, options, attempt, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
-
-                throw new SnipeApiException(
-                    "SnipeImport.NetworkFailure",
-                    $"{DescribeRequest(operation, method, relativePath)} failed: network request error: {exception.Message}",
-                    exception);
-            }
-        }
-
-        throw new InvalidOperationException("Snipe-IT request retry loop ended unexpectedly.");
-    }
-
-    private HttpRequestMessage CreateRequest(
-        HttpMethod method,
-        string relativePath,
-        string? serializedPayload,
-        SnipeImportOptions options)
-    {
-        var request = new HttpRequestMessage(method, BuildUri(relativePath, options));
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", options.ApiToken);
-        if (serializedPayload is not null)
-        {
-            request.Content = new StringContent(serializedPayload, Encoding.UTF8, "application/json");
-        }
-
-        return request;
-    }
-
-    private async Task DelayBeforeRetryAsync(
-        HttpResponseMessage? response,
-        SnipeImportOptions options,
-        int attempt,
-        CancellationToken cancellationToken)
-    {
-        var retryAfter = ReadRetryAfter(response);
-        var exponentialMilliseconds = options.RetryBaseDelay.TotalMilliseconds * Math.Pow(2, attempt);
-        var jitterMilliseconds = options.RetryBaseDelay.TotalMilliseconds <= 0
-            ? 0
-            : Random.Shared.NextDouble() * Math.Min(250, options.RetryBaseDelay.TotalMilliseconds);
-        var delay = retryAfter ?? TimeSpan.FromMilliseconds(exponentialMilliseconds + jitterMilliseconds);
-        if (delay > TimeSpan.Zero)
-        {
-            await Task.Delay(delay, _timeProvider, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
-    private static bool IsRetryableStatus(HttpStatusCode statusCode)
-    {
-        return statusCode == (HttpStatusCode)429
-            || statusCode is HttpStatusCode.InternalServerError
-                or HttpStatusCode.BadGateway
-                or HttpStatusCode.ServiceUnavailable
-                or HttpStatusCode.GatewayTimeout;
-    }
-
-    private TimeSpan? ReadRetryAfter(HttpResponseMessage? response)
-    {
-        var retryAfter = response?.Headers.RetryAfter;
-        if (retryAfter?.Delta is { } delta)
-        {
-            return delta < TimeSpan.Zero ? TimeSpan.Zero : delta;
-        }
-
-        if (retryAfter?.Date is { } date)
-        {
-            var delay = date - _timeProvider.GetUtcNow();
-            return delay < TimeSpan.Zero ? TimeSpan.Zero : delay;
-        }
-
-        return null;
-    }
-
-    private static Uri BuildUri(string relativePath, SnipeImportOptions options)
-    {
-        return new Uri(ApiEndpointValidator.ValidateSnipeBaseUri(options.BaseUrl), relativePath.TrimStart('/'));
+        return _apiClient.SendJsonAsync(method, relativePath, payload, operation, options, cancellationToken);
     }
 
     private static Dictionary<string, object?> BuildAssetPayload(
@@ -2201,16 +2131,28 @@ public sealed class SnipeImporter : ISnipeImporter
         }
 
         if (Normalize(options.MacAddressCustomFieldDbColumnName) is { } macFieldName
-            && record.MacAddresses
-                .Select(value => (Comparable: MacAddressNormalizer.NormalizeComparable(value), Display: MacAddressNormalizer.NormalizeDisplay(value)))
-                .FirstOrDefault(value => value.Comparable is not null
-                    && value.Display is not null
-                    && !ignoredMacAddresses.Contains(value.Comparable)).Display is { } macAddress)
+            && SelectPayloadMacAddress(record, ignoredMacAddresses) is { } macAddress)
         {
             payload[macFieldName] = macAddress;
         }
 
         return payload;
+    }
+
+    /// <summary>
+    /// Selects the one normalized, non-ignored MAC value that the hardware payload will manage.
+    /// The same helper is used by change detection so Preview and execution cannot disagree.
+    /// </summary>
+    private static string? SelectPayloadMacAddress(
+        SnipeAssetImportRecord record,
+        IReadOnlySet<string> ignoredMacAddresses)
+    {
+        return record.MacAddresses
+            .Select(value => (Comparable: MacAddressNormalizer.NormalizeComparable(value), Display: MacAddressNormalizer.NormalizeDisplay(value)))
+            .FirstOrDefault(value => value.Comparable is not null
+                    && value.Display is not null
+                    && !ignoredMacAddresses.Contains(value.Comparable))
+            .Display;
     }
 
     /// <summary>
@@ -2236,8 +2178,28 @@ public sealed class SnipeImporter : ISnipeImporter
             lines.Add(firstAddedNote);
         }
 
-        lines.Add($"Auto Synced from Atera at {FormatUtcTimestamp(syncedAt)}");
+        lines.Add($"{AutoSyncedNotePrefix}{FormatUtcTimestamp(syncedAt)}");
         return string.Join(Environment.NewLine, lines);
+    }
+
+    /// <summary>
+    /// Removes tool-managed timestamp lines and normalizes line endings while retaining the business note content and order.
+    /// </summary>
+    private static string NormalizeBusinessNotes(string? notes)
+    {
+        if (string.IsNullOrEmpty(notes))
+        {
+            return string.Empty;
+        }
+
+        var normalizedLines = notes
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n')
+            .Split('\n')
+            .Where(line => !line.StartsWith(FirstAddedNotePrefix, StringComparison.Ordinal)
+                && !line.StartsWith(AutoSyncedNotePrefix, StringComparison.Ordinal));
+
+        return string.Join("\n", normalizedLines).TrimEnd();
     }
 
     private static string BuildFirstAddedNote(DateTimeOffset createdAt)
@@ -2341,11 +2303,6 @@ public sealed class SnipeImporter : ISnipeImporter
             $"{operation} returned JSON without the required rows array.");
     }
 
-    private static int? ReadTotal(JsonElement root)
-    {
-        return root.ValueKind == JsonValueKind.Object ? ReadInt(root, "total") : null;
-    }
-
     private static SnipeEntity? ParseEntity(JsonElement element)
     {
         var id = ReadInt(element, "id");
@@ -2423,9 +2380,12 @@ public sealed class SnipeImporter : ISnipeImporter
             ReadString(element, "name") ?? ReadString(element, "asset_tag") ?? id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ReadString(element, "asset_tag"),
             ReadString(element, "serial"),
+            ReadEntityId(element, "company"),
             ReadEntityName(element, "company"),
+            ReadEntityId(element, "model"),
             ReadEntityName(element, "category") ?? ReadEntityName(element, "asset_category"),
             ReadEntityName(element, "model"),
+            ReadEntityId(element, "status_label"),
             ReadString(element, "notes"),
             ReadCustomFields(element));
     }
@@ -2583,44 +2543,6 @@ public sealed class SnipeImporter : ISnipeImporter
         throw new SnipeApiException(
             code,
             $"{DescribeRequest(operation, method, relativePath)} failed: Snipe-IT returned a {failureKind}. Detail: {errorDetail}");
-    }
-
-    /// <summary>
-    /// Maps transport status to stable operator-facing failure codes without relying on localized response text.
-    /// </summary>
-    private static string ClassifyHttpFailure(HttpStatusCode statusCode, bool hasValidationDetails)
-    {
-        return statusCode switch
-        {
-            HttpStatusCode.Unauthorized => "SnipeImport.AuthenticationFailed",
-            HttpStatusCode.Forbidden => "SnipeImport.AuthorizationFailed",
-            (HttpStatusCode)429 => "SnipeImport.RateLimited",
-            _ when (int)statusCode >= 500 => "SnipeImport.ServerError",
-            _ when hasValidationDetails => "SnipeImport.ValidationError",
-            _ => "SnipeImport.HttpFailure"
-        };
-    }
-
-    /// <summary>
-    /// Parses only documented Snipe-IT error fields from a non-success response and never returns the raw response body.
-    /// </summary>
-    private static string? TryReadErrorDetails(string content, out bool hasValidationDetails)
-    {
-        hasValidationDetails = false;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(content);
-            return ReadErrorDetails(document.RootElement, out hasValidationDetails);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
     }
 
     /// <summary>
@@ -3070,6 +2992,9 @@ public sealed class SnipeImporter : ISnipeImporter
 
     private sealed record ModelPlan(int? ModelId, PlannedModelCreate? ModelCreate);
 
+    /// <summary>
+    /// Carries one resolved asset target plus the stable business-field reasons that require a hardware write.
+    /// </summary>
     private sealed record PlannedRecord(
         SnipeAssetImportRecord Record,
         int? CompanyId,
@@ -3077,7 +3002,26 @@ public sealed class SnipeImporter : ISnipeImporter
         int? ManufacturerId,
         int? ModelId,
         PlannedModelCreate? ModelCreate,
-        SnipeAssetMatch? ExistingAsset);
+        SnipeAssetMatch? ExistingAsset,
+        IReadOnlyList<string> ChangeReasons)
+    {
+        public bool RequiresAssetWrite => ExistingAsset is null || ChangeReasons.Count > 0;
+    }
+
+    /// <summary>
+    /// Carries one Snipe-IT hardware asset that is owned by the ATERA- tag namespace but absent from the current pull.
+    /// </summary>
+    private sealed record PlannedAssetDeletion(
+        SnipeAssetMatch Asset,
+        string AteraAgentId,
+        string Reason);
+
+    /// <summary>
+    /// Returns the immutable create/update/no-op and stale-delete plans produced from one shared hardware snapshot.
+    /// </summary>
+    private sealed record SnipeImportPlanningResult(
+        IReadOnlyList<PlannedRecord> Assets,
+        IReadOnlyList<PlannedAssetDeletion> Deletions);
 
     /// <summary>
     /// Holds the normalized company-name index built from the complete company snapshot for one import run.
@@ -3503,6 +3447,9 @@ public sealed class SnipeImporter : ISnipeImporter
         }
     }
 
+    /// <summary>
+    /// Owns all mutable counters, actions, failures, warnings, and reference plans for exactly one import invocation.
+    /// </summary>
     private sealed class ImportRunContext
     {
         private readonly Dictionary<string, PlannedCompanyCreate> _plannedCompanies = [];
@@ -3535,6 +3482,7 @@ public sealed class SnipeImporter : ISnipeImporter
         public IEnumerable<PlannedModelUpdate> PlannedModelUpdates => _plannedModelUpdates.Values;
         public int CreatedAssets { get; set; }
         public int UpdatedAssets { get; set; }
+        public int DeletedAssets { get; set; }
         public int SkippedAssets { get; set; }
         public int FailedAssets { get; set; }
         public int CreatedCompanies { get; set; }
@@ -3670,7 +3618,12 @@ public sealed class SnipeImporter : ISnipeImporter
             }
         }
 
-        public void AddPlannedAction(string actionType, string targetType, string targetName, string message)
+        public void AddPlannedAction(
+            string actionType,
+            string targetType,
+            string targetName,
+            string message,
+            string? identifier = null)
         {
             Actions.Add(new ImportAction
             {
@@ -3678,11 +3631,17 @@ public sealed class SnipeImporter : ISnipeImporter
                 TargetType = targetType,
                 TargetName = targetName,
                 WasExecuted = false,
+                Identifier = identifier,
                 Message = message
             });
         }
 
-        public void AddExecutedAction(string actionType, string targetType, string targetName, string message)
+        public void AddExecutedAction(
+            string actionType,
+            string targetType,
+            string targetName,
+            string message,
+            string? identifier = null)
         {
             Actions.Add(new ImportAction
             {
@@ -3690,9 +3649,27 @@ public sealed class SnipeImporter : ISnipeImporter
                 TargetType = targetType,
                 TargetName = targetName,
                 WasExecuted = true,
+                Identifier = identifier,
                 Message = message
             });
             ExecutedWriteCount++;
+        }
+
+        /// <summary>
+        /// Records an unchanged asset as a completed no-op without counting it as an HTTP mutation.
+        /// </summary>
+        public void AddSkippedAsset(PlannedRecord plannedRecord)
+        {
+            var existingAsset = plannedRecord.ExistingAsset!;
+            SkippedAssets++;
+            Actions.Add(new ImportAction
+            {
+                ActionType = "Skip",
+                TargetType = "Asset",
+                TargetName = existingAsset.AssetTag ?? existingAsset.Name,
+                WasExecuted = !Options.DryRun,
+                Message = $"Asset '{plannedRecord.Record.Name}' already matches Snipe-IT asset id {existingAsset.Id}."
+            });
         }
 
         public void AddFailure(
@@ -3721,6 +3698,7 @@ public sealed class SnipeImporter : ISnipeImporter
                 ConflictingAssets: conflictingAssets,
                 FailureCode: code,
                 FailureMessage: message,
+                ChangeReasons: null,
                 DeviceType: record.DeviceType));
             Failures.Add(new ImportFailure
             {
@@ -3728,6 +3706,36 @@ public sealed class SnipeImporter : ISnipeImporter
                 TargetName = Normalize(record.AssetTag) ?? Normalize(record.Name) ?? "<unknown>",
                 Code = code,
                 Message = message
+            });
+        }
+
+        /// <summary>
+        /// Records a fatal run-local hardware snapshot failure when no source record exists to carry the failure.
+        /// </summary>
+        public void AddHardwareSnapshotFailure(string code, string message)
+        {
+            FailedAssets++;
+            Failures.Add(new ImportFailure
+            {
+                TargetType = "Asset",
+                TargetName = "Snipe-IT hardware snapshot",
+                Code = code,
+                Message = message
+            });
+        }
+
+        /// <summary>
+        /// Records one failed stale-asset delete with enough bounded identity detail for administrator audit.
+        /// </summary>
+        public void AddDeletionFailure(PlannedAssetDeletion deletion, string code, string message)
+        {
+            FailedAssets++;
+            Failures.Add(new ImportFailure
+            {
+                TargetType = "Asset",
+                TargetName = deletion.Asset.AssetTag ?? deletion.Asset.Name,
+                Code = code,
+                Message = $"{BuildDeletionAuditMessage(deletion)} Delete failed: {message}"
             });
         }
 
@@ -3782,6 +3790,7 @@ public sealed class SnipeImporter : ISnipeImporter
             {
                 CreatedAssets = CreatedAssets,
                 UpdatedAssets = UpdatedAssets,
+                DeletedAssets = DeletedAssets,
                 SkippedAssets = SkippedAssets,
                 FailedAssets = FailedAssets,
                 CreatedCompanies = CreatedCompanies,

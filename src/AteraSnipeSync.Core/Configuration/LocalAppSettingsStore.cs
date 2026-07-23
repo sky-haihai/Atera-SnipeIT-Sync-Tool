@@ -80,9 +80,9 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
     }
 
     /// <summary>
-    /// Loads reusable manual sync settings from local config, returning null when none are present.
+    /// Loads the complete shared application settings without calling external systems or changing the JSON file.
     /// </summary>
-    public async Task<ManualSyncSettings?> LoadManualSyncSettingsAsync(CancellationToken cancellationToken)
+    public async Task<SyncAppSettings?> LoadSyncAppSettingsAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_filePath))
         {
@@ -95,15 +95,19 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
         var mappingSection = root["Mapping"] as JsonObject;
         var defaultCategoryName = ReadOptionalString(mappingSection, "DefaultCategoryName")
             ?? ReadOptionalString(mappingSection, "DefaultComputerCategoryName");
-        var settings = new ManualSyncSettings
+        var schedule = root["Sync"]?["Schedule"] is JsonObject scheduleSection
+            ? ReadScheduleOptions(scheduleSection)
+            : null;
+        var notificationSection = root["Notifications"] as JsonObject;
+        var settings = new SyncAppSettings
         {
             AteraBaseUrl = ReadOptionalString(ateraSection, "BaseUrl"),
             AteraApiKey = ReadOptionalString(ateraSection, "ApiKey"),
             SnipeItBaseUrl = ReadOptionalString(snipeItSection, "BaseUrl"),
             SnipeItApiToken = ReadOptionalString(snipeItSection, "ApiToken"),
-            DefaultCompanyName = ReadOptionalString(mappingSection, "DefaultCompanyName"),
-            DefaultManufacturerName = ReadOptionalString(mappingSection, "DefaultManufacturerName"),
-            DefaultModelName = ReadOptionalString(mappingSection, "DefaultModelName"),
+            DefaultCompanyName = SyncApplicationDefaults.CompanyName,
+            DefaultManufacturerName = SyncApplicationDefaults.ManufacturerName,
+            DefaultModelName = SyncApplicationDefaults.ModelName,
             DefaultCategoryName = defaultCategoryName,
             ModelCategoriesToNormalize = ReadStringArray(snipeItSection, "ModelCategoriesToNormalize"),
             DefaultStatusId = ReadOptionalInt(snipeItSection, "DefaultStatusId"),
@@ -115,59 +119,22 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             IgnoredMacAddresses = ReadStringArray(snipeItSection, "IgnoredMacAddresses"),
             NameMatchThreshold = ReadOptionalDouble(snipeItSection, "NameMatchThreshold"),
             CreateMissingCompanies = ReadOptionalBool(snipeItSection, "CreateMissingCompanies"),
-            CreateMissingModels = ReadOptionalBool(snipeItSection, "CreateMissingModels")
+            CreateMissingModels = ReadOptionalBool(snipeItSection, "CreateMissingModels"),
+            Schedule = schedule,
+            Notifications = notificationSection is null
+                ? DisabledNotifications()
+                : ReadNotificationConfig(notificationSection)
         };
 
-        return HasAnyManualSyncSetting(settings) ? settings : null;
+        return HasAnySyncAppSetting(settings) ? settings : null;
     }
 
     /// <summary>
-    /// Loads unattended settings without accepting or modifying legacy plaintext secrets; credentials must come from environment variables.
+    /// Loads unattended settings, including the current plaintext JSON credentials, for one immutable Worker runtime snapshot.
     /// </summary>
-    public async Task<ManualSyncSettings?> LoadWorkerSyncSettingsAsync(CancellationToken cancellationToken)
+    public async Task<SyncAppSettings?> LoadWorkerSyncSettingsAsync(CancellationToken cancellationToken)
     {
-        if (!File.Exists(_filePath))
-        {
-            return null;
-        }
-
-        var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
-        var ateraSection = root["Atera"] as JsonObject;
-        var snipeItSection = root["SnipeIt"] as JsonObject;
-        if (ReadOptionalString(ateraSection, "ApiKey") is not null
-            || ReadOptionalString(snipeItSection, "ApiToken") is not null)
-        {
-            throw new InvalidOperationException(
-                $"WorkerService refuses plaintext API credentials in '{_filePath}'. Save the config from TrayApp to remove them, then set {SecretEnvironmentVariables.AteraApiKey} and {SecretEnvironmentVariables.SnipeItApiToken} for the WorkerService process.");
-        }
-
-        var mappingSection = root["Mapping"] as JsonObject;
-        var defaultCategoryName = ReadOptionalString(mappingSection, "DefaultCategoryName")
-            ?? ReadOptionalString(mappingSection, "DefaultComputerCategoryName");
-        var settings = new ManualSyncSettings
-        {
-            AteraBaseUrl = ReadOptionalString(ateraSection, "BaseUrl"),
-            AteraApiKey = ReadEnvironmentSecret(SecretEnvironmentVariables.AteraApiKey),
-            SnipeItBaseUrl = ReadOptionalString(snipeItSection, "BaseUrl"),
-            SnipeItApiToken = ReadEnvironmentSecret(SecretEnvironmentVariables.SnipeItApiToken),
-            DefaultCompanyName = ReadOptionalString(mappingSection, "DefaultCompanyName"),
-            DefaultManufacturerName = ReadOptionalString(mappingSection, "DefaultManufacturerName"),
-            DefaultModelName = ReadOptionalString(mappingSection, "DefaultModelName"),
-            DefaultCategoryName = defaultCategoryName,
-            ModelCategoriesToNormalize = ReadStringArray(snipeItSection, "ModelCategoriesToNormalize"),
-            DefaultStatusId = ReadOptionalInt(snipeItSection, "DefaultStatusId"),
-            CompanyAliases = ReadStringDictionary(mappingSection, "CompanyAliases"),
-            ManufacturerAliases = ReadStringDictionary(mappingSection, "ManufacturerAliases"),
-            IgnoredDeviceTypes = ReadStringArray(mappingSection, "IgnoredDeviceTypes"),
-            MacAddressCustomFieldDbColumnName = ReadOptionalString(snipeItSection, "MacAddressCustomFieldDbColumnName"),
-            MacAddressFieldsetName = ReadOptionalString(snipeItSection, "MacAddressFieldsetName"),
-            IgnoredMacAddresses = ReadStringArray(snipeItSection, "IgnoredMacAddresses"),
-            NameMatchThreshold = ReadOptionalDouble(snipeItSection, "NameMatchThreshold"),
-            CreateMissingCompanies = ReadOptionalBool(snipeItSection, "CreateMissingCompanies"),
-            CreateMissingModels = ReadOptionalBool(snipeItSection, "CreateMissingModels")
-        };
-
-        return HasAnyManualSyncSetting(settings) ? settings : null;
+        return await LoadSyncAppSettingsAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -189,10 +156,10 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
     }
 
     /// <summary>
-    /// Saves reusable manual sync panel settings while preserving unrelated local config sections.
+    /// Atomically saves the complete validated Tray/Worker configuration while preserving unrelated JSON sections.
     /// </summary>
-    public async Task SaveManualSyncSettingsAsync(
-        ManualSyncSettings settings,
+    public async Task SaveSyncAppSettingsAsync(
+        SyncAppSettings settings,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -201,9 +168,6 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
         var ateraApiKey = RequireSetting(settings.AteraApiKey, nameof(settings.AteraApiKey));
         var snipeItBaseUrl = RequireSetting(settings.SnipeItBaseUrl, nameof(settings.SnipeItBaseUrl));
         var snipeItApiToken = RequireSetting(settings.SnipeItApiToken, nameof(settings.SnipeItApiToken));
-        var defaultCompanyName = RequireSetting(settings.DefaultCompanyName, nameof(settings.DefaultCompanyName));
-        var defaultManufacturerName = RequireSetting(settings.DefaultManufacturerName, nameof(settings.DefaultManufacturerName));
-        var defaultModelName = RequireSetting(settings.DefaultModelName, nameof(settings.DefaultModelName));
         var defaultCategoryName = RequireSetting(settings.DefaultCategoryName, nameof(settings.DefaultCategoryName));
         var defaultStatusId = settings.DefaultStatusId
             ?? throw new ArgumentException("Default status id is required.", nameof(settings));
@@ -241,6 +205,10 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             throw new ArgumentException("Name match threshold must be between 0 and 1.", nameof(settings));
         }
 
+        var schedule = settings.Schedule
+            ?? throw new ArgumentException("Schedule configuration is required.", nameof(settings));
+        ScheduleCalculator.Validate(schedule);
+
         await UpdateRootAsync(root =>
         {
             var ateraSection = GetOrCreateObject(root, "Atera");
@@ -260,15 +228,32 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             snipeItSection["CreateMissingModels"] = settings.CreateMissingModels ?? false;
 
             var mappingSection = GetOrCreateObject(root, "Mapping");
-            mappingSection["DefaultCompanyName"] = defaultCompanyName;
-            mappingSection["DefaultManufacturerName"] = defaultManufacturerName;
-            mappingSection["DefaultModelName"] = defaultModelName;
+            mappingSection.Remove("DefaultCompanyName");
+            mappingSection.Remove("DefaultManufacturerName");
+            mappingSection.Remove("DefaultModelName");
             mappingSection["DefaultCategoryName"] = defaultCategoryName;
             mappingSection.Remove("DefaultComputerCategoryName");
             mappingSection.Remove("DefaultServerCategoryName");
             mappingSection["CompanyAliases"] = WriteStringDictionary(settings.CompanyAliases);
             mappingSection["ManufacturerAliases"] = WriteStringDictionary(settings.ManufacturerAliases);
             mappingSection["IgnoredDeviceTypes"] = WriteStringArray(settings.IgnoredDeviceTypes);
+
+            var syncSection = GetOrCreateObject(root, "Sync");
+            syncSection.Remove("DryRun");
+            syncSection["Schedule"] = WriteScheduleOptions(schedule);
+
+            var notificationSection = GetOrCreateObject(root, "Notifications");
+            notificationSection["Enabled"] = settings.Notifications.Enabled;
+            notificationSection["OnEvents"] = WriteStringArray(settings.Notifications.OnEvents);
+            WriteOptionalString(notificationSection, "SmtpHost", settings.Notifications.SmtpHost);
+            notificationSection["SmtpPort"] = settings.Notifications.SmtpPort;
+            notificationSection["SmtpUseSsl"] = settings.Notifications.SmtpUseSsl;
+            WriteOptionalString(notificationSection, "SmtpUsername", settings.Notifications.SmtpUsername);
+            WriteOptionalString(notificationSection, "SmtpPassword", settings.Notifications.SmtpPassword);
+            WriteOptionalString(notificationSection, "EmailFrom", settings.Notifications.EmailFrom);
+            WriteOptionalString(notificationSection, "EmailTo", settings.Notifications.EmailTo);
+            notificationSection["WebhookPayloadFormat"] = settings.Notifications.WebhookPayloadFormat.ToString();
+            WriteOptionalString(notificationSection, "WebhookUrl", settings.Notifications.WebhookUrl);
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -292,20 +277,6 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
     }
 
     /// <summary>
-    /// Loads whether unattended runs are dry-run, defaulting to the fail-safe value true.
-    /// </summary>
-    public async Task<bool> LoadSyncDryRunAsync(CancellationToken cancellationToken)
-    {
-        if (!File.Exists(_filePath))
-        {
-            return true;
-        }
-
-        var root = await LoadRootAsync(cancellationToken).ConfigureAwait(false);
-        return root["Sync"]?["DryRun"]?.GetValue<bool>() ?? true;
-    }
-
-    /// <summary>
     /// Loads notification enablement and subscriptions, defaulting to a disabled publisher configuration.
     /// </summary>
     public async Task<NotificationConfig> LoadNotificationConfigAsync(CancellationToken cancellationToken)
@@ -321,13 +292,7 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             return DisabledNotifications();
         }
 
-        return new NotificationConfig
-        {
-            Enabled = ReadOptionalBool(section, "Enabled") ?? false,
-            OnEvents = ReadStringArray(section, "OnEvents"),
-            EmailTo = ReadOptionalString(section, "EmailTo"),
-            WebhookUrl = ReadOptionalString(section, "WebhookUrl")
-        };
+        return ReadNotificationConfig(section);
     }
 
     /// <summary>
@@ -421,13 +386,6 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             }
         }
     }
-
-    private static string? ReadEnvironmentSecret(string variableName)
-    {
-        var value = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process)?.Trim();
-        return string.IsNullOrWhiteSpace(value) ? null : value;
-    }
-
 
     private static JsonObject GetOrCreateObject(JsonObject root, string propertyName)
     {
@@ -569,15 +527,12 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
         return normalizedValues;
     }
 
-    private static bool HasAnyManualSyncSetting(ManualSyncSettings settings)
+    private static bool HasAnySyncAppSetting(SyncAppSettings settings)
     {
         return !string.IsNullOrWhiteSpace(settings.AteraBaseUrl)
             || !string.IsNullOrWhiteSpace(settings.AteraApiKey)
             || !string.IsNullOrWhiteSpace(settings.SnipeItBaseUrl)
             || !string.IsNullOrWhiteSpace(settings.SnipeItApiToken)
-            || !string.IsNullOrWhiteSpace(settings.DefaultCompanyName)
-            || !string.IsNullOrWhiteSpace(settings.DefaultManufacturerName)
-            || !string.IsNullOrWhiteSpace(settings.DefaultModelName)
             || !string.IsNullOrWhiteSpace(settings.DefaultCategoryName)
             || settings.ModelCategoriesToNormalize.Count > 0
             || settings.DefaultStatusId.HasValue
@@ -589,7 +544,45 @@ public sealed class LocalAppSettingsStore : ILocalAppSettingsReader
             || settings.IgnoredMacAddresses.Count > 0
             || settings.NameMatchThreshold.HasValue
             || settings.CreateMissingCompanies.HasValue
-            || settings.CreateMissingModels.HasValue;
+            || settings.CreateMissingModels.HasValue
+            || settings.Schedule is not null
+            || settings.Notifications.Enabled
+            || settings.Notifications.OnEvents.Count > 0;
+    }
+
+    private static NotificationConfig ReadNotificationConfig(JsonObject section)
+    {
+        return new NotificationConfig
+        {
+            Enabled = ReadOptionalBool(section, "Enabled") ?? false,
+            OnEvents = ReadStringArray(section, "OnEvents"),
+            SmtpHost = ReadOptionalString(section, "SmtpHost"),
+            SmtpPort = ReadOptionalInt(section, "SmtpPort") ?? 587,
+            SmtpUseSsl = ReadOptionalBool(section, "SmtpUseSsl") ?? true,
+            SmtpUsername = ReadOptionalString(section, "SmtpUsername"),
+            SmtpPassword = ReadOptionalString(section, "SmtpPassword"),
+            EmailFrom = ReadOptionalString(section, "EmailFrom"),
+            EmailTo = ReadOptionalString(section, "EmailTo"),
+            WebhookPayloadFormat = ReadWebhookPayloadFormat(section),
+            WebhookUrl = ReadOptionalString(section, "WebhookUrl")
+        };
+    }
+
+    /// <summary>
+    /// Loads the explicit webhook wire format, defaulting legacy settings to the Teams workflow contract.
+    /// </summary>
+    private static WebhookPayloadFormat ReadWebhookPayloadFormat(JsonObject section)
+    {
+        var value = ReadOptionalString(section, "WebhookPayloadFormat");
+        if (value is null)
+        {
+            return WebhookPayloadFormat.TeamsAdaptiveCard;
+        }
+
+        return Enum.TryParse<WebhookPayloadFormat>(value, ignoreCase: true, out var format)
+            && Enum.IsDefined(format)
+                ? format
+                : throw new InvalidDataException("Notifications.WebhookPayloadFormat is invalid.");
     }
 
     private static SyncScheduleOptions ReadScheduleOptions(JsonObject scheduleSection)

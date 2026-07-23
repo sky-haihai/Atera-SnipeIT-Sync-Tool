@@ -71,7 +71,7 @@ public interface ISyncOrchestrator
 9. 记录 `FinishedAt`
 10. 返回 `SyncRunResult`
 
-如果所有阶段都成功，且 import result 没有 failures，则 `SyncRunResult.Success = true`。
+如果 pull、mapping 和 import 三个阶段都完整返回，且 import 没有报告 `Cancelled`，则 `SyncRunResult.Success = true`。单条或多条 asset/reference import failure 属于记录级结果：必须保留在 `ImportResult.Failures` 和 run-level `Failures` 中，但不能把已完整执行的 run 降级为失败。
 
 ## 6. Dry Run 和 TriggeredBy
 
@@ -115,8 +115,10 @@ public interface ISyncOrchestrator
 如果 Snipe Import 正常返回，但 `SnipeImportResult.Failures` 非空：
 
 - 保留 `ImportResult`
-- 返回 `Success = false`
+- 返回 `Success = true`，表示 pipeline 已完整结束
 - 把每条 import failure 转换为 `Stage = "SnipeImport"` 的 `SyncFailure`
+
+如果 Snipe Import 返回 `Cancelled = true`，则 run 未完整执行，必须返回 `Success = false` 并保留已产生的 actions、counts 和 failures。
 
 ### 7.4 Cancellation
 
@@ -165,7 +167,8 @@ Sync Orchestrator Module 不负责：
 - pull 失败时不继续 map/import
 - map 失败时不继续 import
 - import 抛异常时输出 structured failure
-- import 返回 asset failures 时输出 structured run failure
+- import 返回 asset/reference failures 时输出 structured failure 明细，但完整 run 仍为 `Success = true`
+- import 返回 `Cancelled = true` 或阶段异常时 run 为 `Success = false`
 - warnings 被完整聚合
 - dry-run 参数正确传递到 Snipe Import
 - started/finished timestamps 可通过测试时间来源验证
@@ -188,5 +191,12 @@ Sync Orchestrator Module 不负责：
 
 - warnings 必须按 `Source + Code + Message` 去重，并保证 pull、mapping、import 各阶段只聚合一次。
 - `AteraPullException` 必须按其 `FailureKind` 转换为稳定的 run failure code（例如 `AteraPull.AuthenticationFailed`），不能统一降级为异常类型名。
-- Snipe Import 在真实写入后被取消时会返回部分失败结果；Orchestrator 必须保留该 import result 并输出失败 run，供 status/report 审计。
+- Snipe Import 在真实写入后被取消时会返回部分结果；Orchestrator 必须保留该 import result 并输出失败 run，供 status/report 审计。
 - 首次写入前的用户取消仍直接向调用者传播，不伪造成普通失败。
+
+## 13. 2026-07 Run completion 与记录级失败边界
+
+- `SyncRunResult.Success` 表示 run 是否完整走完 pull → mapping → import pipeline，不再表示每一条记录都成功。
+- import 正常返回且 `Cancelled = false` 时，即使 `SnipeImportResult.Failures` 非空，run 也必须为 `Success = true`；失败记录、失败计数和 warning 继续完整保留。
+- pull/mapping/import 阶段抛出不可恢复异常、import 返回 `Cancelled = true`、调用被取消或进程中断/崩溃，都不能归类为 completed。
+- 硬进程崩溃可能来不及生成 `SyncRunResult`；不得用上一条成功或部分写入记录伪造 completed 状态。

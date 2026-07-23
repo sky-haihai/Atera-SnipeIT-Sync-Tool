@@ -159,7 +159,7 @@ The returned options must set:
 14. set `finishedAt = timeProvider.GetUtcNow()`
 15. return `SyncRunResult`
 
-`Success = failures.Count == 0`.
+`Success = pipelineCompleted`, where the flag becomes true only after import returns normally with `Cancelled = false`. Record-level failures remain diagnostic data and do not change the flag.
 
 ## 7. Failure Conversion
 
@@ -224,7 +224,7 @@ Import exception result:
 
 Import returned failures result:
 
-- `Success = false`
+- `Success = true` because all three stages returned normally
 - `PullResult = successful pull result`
 - `ImportBatch = successful import batch`
 - `ImportResult = returned import result`
@@ -235,7 +235,13 @@ Success result:
 
 - `Success = true`
 - all three stage outputs are populated
-- `Failures` is empty
+- `Failures` may contain converted record-level import failures
+
+Cancelled import result:
+
+- `Success = false`
+- all completed stage outputs, import actions, counts, warnings and failures remain populated
+- `ImportResult.Cancelled = true`
 
 ## 10. Validation Behavior
 
@@ -269,12 +275,13 @@ Required tests:
 3. `RunOnceAsync_StopsBeforeMappingAndImport_WhenPullFails`
 4. `RunOnceAsync_StopsBeforeImport_WhenMappingFails`
 5. `RunOnceAsync_ReturnsFailureAndKeepsPriorResults_WhenImportThrows`
-6. `RunOnceAsync_ConvertsImportFailuresToRunFailures`
+6. `RunOnceAsync_CompletesAndKeepsRunFailures_WhenImportReturnsRecordFailures`
 7. `RunOnceAsync_AppliesSyncDryRunToSnipeOptions`
 8. `RunOnceAsync_RethrowsOperationCanceledException`
 9. `RunOnceAsync_ReportsStageProgress`
 10. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
 11. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
+12. `RunOnceAsync_ReturnsFailedRun_WhenImportResultIsCancelled`
 
 Tests must use fake in-memory implementations of:
 
@@ -290,7 +297,8 @@ Tests must not call real Atera or Snipe-IT APIs.
 - `dotnet test` succeeds
 - normal run calls dependencies in order
 - stage failures short-circuit correctly
-- import result failures make the run unsuccessful
+- import result failures remain visible while a normally completed pipeline stays successful
+- cancelled import results and stage exceptions make the run unsuccessful
 - warnings are aggregated in pull -> mapping -> import order
 - dry-run follows `SyncRunOptions.DryRun`
 - cancellation is not swallowed
@@ -302,3 +310,14 @@ Tests must not call real Atera or Snipe-IT APIs.
 `ToStageFailure` 对 `AteraPullException` 生成 `Code = $"AteraPull.{exception.FailureKind}"`；其它异常仍使用安全类型名。`SnipeImportResult.Cancelled=true` 时保留 result 并按其 failures 返回 `Success=false`。
 
 新增测试验证 warning 只出现一次、Atera authentication code 保留，以及部分取消 import result 可进入 run result。
+
+## 14. 2026-07 Completion classification
+
+`RunOnceAsync` tracks whether the terminal import stage returned normally and was not cancelled, rather than deriving completion from `failures.Count`:
+
+```csharp
+pipelineCompleted = !importResult.Cancelled;
+Success = pipelineCompleted;
+```
+
+The flag starts false, so all early pull/mapping failures and import exceptions remain failed. A normally returned import result stays completed even when its `Failures` collection or failed counters are non-zero. Converted run-level failures are diagnostic records and must not override the completion flag. `SyncRunResult.Success` and its class/property comments must state this contract explicitly.

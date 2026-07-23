@@ -59,7 +59,7 @@ public string? ManualPreflightCsvDirectory { get; init; }
 - `NameMatchThreshold` 有效范围为 `0.0 < value <= 1.0`
 - `ManualPreflightCsvEnabled = true` 时，必须先输出手动 `Preview Changes` 临时 CSV write plan
 - `ManualPreflightCsvDirectory` 在 manual preflight CSV 流程下必填
-- `ManualPreflightCsvDirectory` 必须是本机可写目录；无法创建或写入时，本次 import 必须失败且不得执行任何 `POST` / `PATCH`
+- `ManualPreflightCsvDirectory` 必须是本机可写目录；无法创建或写入时，本次 import 必须失败且不得执行任何 `POST` / `PATCH` / `DELETE`
 - `ManualPreflightCsvEnabled` 只用于手动 `Preview Changes`；`Sync Now` 和后台 scheduler 自动 sync 不应启用该选项
 
 ### 2.3 `InventoryMapper`
@@ -117,7 +117,8 @@ public sealed class SnipeImporter : ISnipeImporter
 - plan unique company/category/manufacturer/model references before asset matching
 - load one paginated Snipe-IT model snapshot for references whose categories already exist
 - load one paginated Snipe-IT hardware snapshot before matching non-blocked assets
-- create or update asset
+- create, update, skip, or delete asset
+- compare the complete hardware snapshot against all current batch asset tags and plan deletion only for stale `ATERA-` tags
 - append `Auto Synced from Atera at {UTC timestamp}` to asset notes when create/update payload is built
 - when manual preflight CSV is enabled, write all planned company/category/model/asset changes to temporary CSV before any possible real write
 - report optional safe progress during reference planning, asset matching, CSV writing, dry-run application, and execution
@@ -147,7 +148,7 @@ internal sealed class SnipeImportPreflightCsvWriter
 
 - write one CSV file per writable Snipe-IT object type
 - create output directory when missing
-- write all files before manual `SnipeImporter` execution performs any real `POST` / `PATCH`
+- write all files before manual `SnipeImporter` execution performs any real `POST` / `PATCH` / `DELETE`
 - write empty CSV files with headers when a table has no rows, so the operator can confirm the object type was reviewed
 - never write API tokens
 - keep preflight CSV output separate from final sync result/report files
@@ -165,11 +166,9 @@ Current writable object types:
 
 - companies: add only
 - models: add only
-- assets: add or modify
+- assets: add, modify, blocked, or delete
 
-Reserved operation value:
-
-- `Delete` is reserved for future behavior, but first version must not emit delete rows because this project does not delete/archive Snipe-IT assets.
+`Delete` rows represent Atera-managed Snipe-IT hardware whose normalized `ATERA-...` tag is absent from the current batch.
 
 ### 3.3 `SnipeImportPreflightPlan`
 
@@ -506,7 +505,7 @@ GET /hardware?limit=500&offset={offset}
 
 The importer must:
 
-- skip this snapshot when every valid asset is blocked by reference planning
+- always load this snapshot for an empty Atera batch; for a non-empty batch load it once when at least one source record remains matchable. If every non-empty source record is already blocked, skip the target snapshot and all deletes as a fail-closed safety gate
 - continue requesting pages until `offset >= total` when `total` is present, or until a page returns no rows
 - parse hardware `rows` into `SnipeAssetMatch`
 - parse `custom_fields` entries by their `field` db column and `value`
@@ -555,6 +554,20 @@ Creation-note rules:
 - `SnipeAssetMatch` must retain the hardware snapshot `notes` value. On `PATCH /hardware/{id}`, the importer preserves a syntactically valid existing first-added line, replaces the latest automatic-sync line, and must not invent a first-added line when the existing asset has none.
 - Model category/Fieldset updates modify only their intended fields and must not replace Model notes.
 - Manufacturer remains lookup-only; no manufacturer create-note payload exists in this version.
+
+### 4.8 Hardware delete
+
+Official endpoint:
+
+```text
+DELETE /hardware/{id}
+```
+
+- `{id}` is the integer Snipe-IT asset id from the complete hardware snapshot.
+- The request has no JSON body.
+- DELETE is a mutation and therefore uses one attempt only; it is never automatically replayed after timeout/network uncertainty.
+- A non-success HTTP status is classified by `SnipeApiClient`; an HTTP-success response is then checked by `EnsureBusinessSuccess` because Snipe-IT may report transaction failure in a JSON `status = error` envelope.
+- Official `POST /hardware/:id/restore` documentation identifies deleted hardware as soft-deleted. This module does not permanently purge assets.
 
 ## 5. Response Parsing Rules
 
@@ -605,7 +618,7 @@ It is an optional manual `Preview Changes` path, not the default `Sync Now` path
 
 - dry-run means no writes are executed
 - manual preflight CSV means write temporary CSV review files for operator review
-- `Preview Changes` must enable both dry-run and manual preflight CSV; CSV files are written and no POST/PATCH is executed
+- `Preview Changes` must enable both dry-run and manual preflight CSV; CSV files are written and no POST/PATCH/DELETE is executed
 - `Sync Now` must disable manual preflight CSV and run the real sync pipeline directly
 - scheduled automatic sync must disable manual preflight CSV and rely on normal result/status/report output
 - when a user confirms after preview, the system must rerun the real sync pipeline and must not execute from the first CSV snapshot
@@ -617,7 +630,7 @@ Current writable Snipe-IT object types:
 | Company | Add | `snipeit-companies-plan.csv` |
 | Category | Add | `snipeit-categories-plan.csv` |
 | Model | Add | `snipeit-models-plan.csv` |
-| Hardware asset | Add, Modify, Blocked | `snipeit-assets-plan.csv` |
+| Hardware asset | Add, Modify, Blocked, Delete | `snipeit-assets-plan.csv` |
 
 Current read-only object types:
 
@@ -625,7 +638,7 @@ Current read-only object types:
 | --- | --- | --- |
 | Manufacturer | lookup only | none |
 
-No current object type emits `Delete`. Delete is reserved because future sync policy may support asset archive/delete, but first version must not delete Snipe-IT objects.
+Hardware assets emit `Delete` only under the `ATERA-` ownership and current-batch absence rules in section 24.
 
 ### 6.1 Required CSV write timing
 
@@ -634,9 +647,9 @@ When `ManualPreflightCsvEnabled = true`, `SnipeImporter` must:
 1. perform all read-only lookups needed to decide planned writes
 2. build a complete `SnipeImportPreflightPlan`
 3. write all CSV files to `ManualPreflightCsvDirectory`
-4. only then execute any real `POST` / `PATCH`, unless `DryRun = true`
+4. only then execute any real `POST` / `PATCH` / `DELETE`, unless `DryRun = true`
 
-If CSV writing fails, the import must return/throw a failure before any real `POST` / `PATCH` is sent.
+If CSV writing fails, the import must return/throw a failure before any real `POST` / `PATCH` / `DELETE` is sent.
 
 The TrayApp `Preview Changes` path must call the importer through a request with `DryRun = true`, so preview generation itself never mutates Snipe-IT. The importer still enforces the CSV-before-write gate for any caller that enables manual preflight CSV incorrectly with `DryRun = false`.
 
@@ -697,7 +710,7 @@ For each import run:
 3. Scan valid records for asset plans:
    - first apply any stored company/category/manufacturer/model reference failure to the asset
    - blocked assets must be added to failed preflight rows and must not trigger hardware snapshot loading by themselves
-4. Load Snipe-IT hardware snapshot for records with successful reference plans:
+4. Load one complete Snipe-IT hardware snapshot when the batch is empty or at least one source record remains matchable; if a non-empty batch is entirely blocked, skip snapshot and delete planning:
    - request `/hardware` pages with `limit` and `offset`
    - build local MAC and serial indexes from parsed rows
 5. Find existing asset for records with successful reference plans:
@@ -715,20 +728,25 @@ For each import run:
    - model add row when missing model will be created
    - asset add row when no existing asset matched
    - asset modify row when an existing asset matched
-8. In manual preflight CSV flow:
+8. Build stale Atera-managed delete plans from the same hardware snapshot:
+   - normalize every current batch asset tag and place it in a case-insensitive identity set
+   - select only target assets whose normalized tag begins with `ATERA-`
+   - exclude every target whose full normalized tag remains in the current identity set
+   - order the remaining candidates by Snipe-IT asset id and add `Delete` rows with `ChangeReasons = MissingFromAtera`
+9. In manual preflight CSV flow:
    - write `snipeit-companies-plan.csv`
    - write `snipeit-categories-plan.csv`
    - write `snipeit-models-plan.csv`
    - write `snipeit-assets-plan.csv`
    - stop before real writes if CSV writing fails
-9. In dry-run:
-   - do not execute POST/PATCH
+10. In dry-run:
+   - do not execute POST/PATCH/DELETE
    - add planned action with `WasExecuted = false`
-10. In real run:
+11. In real run:
    - create all missing companies
    - create all missing categories
    - create all missing models
-   - only after all reference writes succeed, execute asset POST/PATCH
+   - only after all reference writes succeed, execute asset POST/PATCH/no-op and then stale DELETE plans
    - if any reference write fails, mark planned assets failed and stop before hardware writes
    - add executed action with `WasExecuted = true`
    - company/category/model/asset create payload notes must include the first-added timestamp line
@@ -740,6 +758,7 @@ Counters represent planned actions in dry-run and executed actions in real run.
 
 - `CreatedAssets`: increment when an asset create action is planned or executed
 - `UpdatedAssets`: increment when an asset update action is planned or executed
+- `DeletedAssets`: increment when an asset delete action is planned in dry-run or successfully executed in a real run
 - `SkippedAssets`: increment only when record is intentionally skipped without failure
 - `FailedAssets`: increment for each failed record
 - `CreatedCompanies`: increment when company create action is planned or executed
@@ -832,7 +851,7 @@ Update mapping tests:
 - manual preflight CSV creates `snipeit-assets-plan.csv`, `snipeit-companies-plan.csv`, `snipeit-categories-plan.csv`, and `snipeit-models-plan.csv` before any real manual sync write
 - missing categories are planned and created as Snipe-IT asset categories with `category_type = asset`
 - manual preflight CSVs include `Operation` values using `Add`, `Modify`, or reserved `Delete`
-- first version never emits `Delete`
+- only stale Snipe-IT hardware with an `ATERA-` tag emits `Delete`; non-`ATERA-` assets never do
 - CSV write failure prevents real Snipe-IT writes
 - `dotnet build AteraSnipeSync.sln --no-restore` passes
 - `dotnet test AteraSnipeSync.sln --no-build` passes
@@ -1219,3 +1238,320 @@ manufacturer grouping 先按 source `ManufacturerName` 去重。每个 group 的
 5. API/JSON failure 继续通过 `PlanReferenceAsync` fail closed，不得在 direct lookup 异常后尝试 alias。
 
 复制 record 时必须保留 `ManufacturerAliasName`。必需 mocked tests 覆盖 source direct 优先、source miss 后 alias fallback、两者 miss 的单 warning，以及多个 model-number matches 继续阻塞。
+
+## 22. Asset 真正变更判定与 no-op 技术规格
+
+官方依据：Snipe-IT `GET /hardware` 提供 asset list；hardware 表示包含 `id`、`asset_tag`、`name`、`serial`、nested `model`、nested `company`、nested `status_label`、`notes` 与 custom fields。官方 hardware update contract管理 `asset_tag`、`status_id`、`model_id`、`company_id`、`name`、`serial`、`notes`，custom field update 使用配置的 DB Field Name：
+
+- https://snipe-it.readme.io/reference/hardware-list
+- https://snipe-it.readme.io/reference/hardware-update
+- https://snipe-it.readme.io/reference/updating-custom-fields
+
+### 22.1 Snapshot contract
+
+`SnipeAssetMatch` 扩展为：
+
+```csharp
+internal sealed record SnipeAssetMatch(
+    int Id,
+    string Name,
+    string? AssetTag,
+    string? Serial,
+    int? CompanyId,
+    string? CompanyName,
+    int? ModelId,
+    string? CategoryName,
+    string? ModelName,
+    int? StatusId,
+    string? Notes,
+    IReadOnlyDictionary<string, string> CustomFields);
+```
+
+`ParseAsset(JsonElement element)` 必须通过现有 `ReadEntityId(element, propertyName)` 读取 `company.id`、`model.id` 与 `status_label.id`。关系为 null 或 id 缺失时保留 null；change detection 对受管目标 id 使用 fail-safe changed 语义。
+
+### 22.2 Planned record 与 change reasons
+
+`PlannedRecord` 新增：
+
+```csharp
+IReadOnlyList<string> ChangeReasons
+```
+
+并暴露 `RequiresAssetWrite => ExistingAsset is null || ChangeReasons.Count > 0`。`CreatePlannedRecord` 改为接收 `ImportRunContext context`，构造 reference 结果后调用：
+
+```csharp
+private static IReadOnlyList<string> BuildAssetChangeReasons(
+    PlannedRecord plannedRecord,
+    ImportRunContext context);
+```
+
+existing asset 的 stable reason 顺序固定为：
+
+```text
+AssetTag; Status; Model; Company; Name; Serial; MacAddress; Notes
+```
+
+判定规则：
+
+1. `AssetTag`：source trim 后与已经由 `ParseAsset` 完成 HTML-decode/trim 的 snapshot 值做 ordinal 比较。
+2. `Status`：`record.StatusId != existing.StatusId`；snapshot id 缺失仍为 changed。
+3. `Model`：existing `model.id` 与已解析 `ModelId` 比较；存在 `ModelCreate` 时必为 changed。
+4. `Company`：existing `company.id` 与已解析 `CompanyId` 比较；存在 `CompanyCreate` 时必为 changed。只有 target payload 不包含 company 时才不比较该字段。
+5. `Name`：source trim 后与已经由 `ParseAsset` 完成 HTML-decode/trim 的 snapshot 值做 ordinal 比较。
+6. `Serial`：仅当 `SerialIsReliableIdentity=true` 且 source serial 可规范化、因此 payload 会包含 `serial` 时比较；audit-only/空 serial 不触发清空或 change。
+7. `MacAddress`：新增 `SelectPayloadMacAddress(record, ignoredMacAddresses)`，同时供 `BuildAssetPayload` 与 diff 使用；只比较实际会写入 custom field 的首个有效、非 ignored MAC，使用 `NormalizeComparable` 比较。
+8. `Notes`：新增 `NormalizeBusinessNotes`，统一 CRLF/LF、保留业务行顺序与内容，但移除以 `FirstAddedNotePrefix` 或 `AutoSyncedNotePrefix` 开头的工具审计行并 trim end；与 `record.Notes` 的相同规范化结果 ordinal 比较。审计时间变化不得单独触发 PATCH。
+
+### 22.3 Preflight CSV
+
+`SnipeAssetPreflightRow` 在 `DeviceType` 前新增：
+
+```csharp
+string? ChangeReasons
+```
+
+asset CSV header 改为：
+
+```text
+Operation,AssetTag,Name,Serial,MacAddresses,CompanyName,ModelName,CategoryName,ManufacturerName,ExistingAssetId,ExistingAssetTag,ConflictingFields,ConflictingValue,ConflictingAssets,FailureCode,FailureMessage,ChangeReasons,DeviceType
+```
+
+`BuildPreflightPlan`：
+
+- Add row：`ChangeReasons=Create`。
+- Modify row：仅 `RequiresAssetWrite=true` 的 existing asset 输出，`ChangeReasons=string.Join("; ", ChangeReasons)`。
+- unchanged existing asset：不输出 row。
+- Blocked row：`ChangeReasons=null`，保留现有 conflict/failure evidence。
+- 即使没有 Add/Modify/Blocked rows，也必须写出 header-only CSV。
+
+### 22.4 Dry-run、真实执行与 counters
+
+`ApplyDryRunPlan` 和 `ExecutePlanAsync` 在 existing asset 且 `RequiresAssetWrite=false` 时都调用：
+
+```csharp
+private void AddSkippedAsset(PlannedRecord plannedRecord)
+```
+
+该 helper 增加 `SkippedAssets`，添加 `ActionType="Skip"`、`TargetType="Asset"` 的 action；`WasExecuted` 在 dry-run 为 false，在真实 run 为 true，但不得增加 `ExecutedWriteCount`。真实 run 立即返回，不调用 `UpdateAssetAsync`。
+
+Add/Modify 的 counters 与 action semantics 保持不变。reference creates/model updates 仍先执行；asset no-op 不取消当前 run 中独立必要的 reference/model writes。
+
+每个成功的 asset Modify 必须复用 `PlannedRecord.ChangeReasons`，不得在执行阶段重新计算 diff：
+
+- `UpdateAssetAsync` 接收 `IReadOnlyList<string> changeReasons`，只在 `EnsureBusinessSuccess` 通过后写一条 `LogInformation`，结构化字段至少包含 `AssetId`、`AssetTag` 与用 `", "` 连接的 `ChangedFields`。
+- executed `ImportAction.Message` 必须追加 `Changed fields: {ChangedFields}.`，使 status/history 保存相同审计信息。
+- `SnipeImportExecutor.ExecuteAssetsAsync` 的成功 progress 对 Modify 必须追加相同 changed-field labels；Tray 的 `DailyLogWriter` 会把该 progress 写入 `ManualSync_yyyyMMdd.log`。Create 与 Skip 的现有 progress 语义保持不变。
+- changed-field labels 只能来自固定集合 `AssetTag; Status; Model; Company; Name; Serial; MacAddress; Notes`，日志不得包含 notes 正文、API token 或 secret。失败的 PATCH 不得写成功变更日志或 executed action。
+
+### 22.5 必需 mocked tests
+
+1. 完整相同 snapshot 在 Preview 中 `UpdatedAssets=0`、`SkippedAssets=1`，asset CSV 只有 header，不含 Modify。
+2. 完整相同 snapshot 在真实 Sync 中无 hardware PATCH，产生一个真实 no-op Skip action。
+3. 每个受管字段的差异都能产生 Modify；至少用一个组合 test 断言 stable `ChangeReasons` 与 CSV row。
+4. 只有 `Auto Synced` timestamp/保留的 first-added timestamp 不同不产生 Modify。
+5. snapshot 缺少 `status_label.id`、`model.id` 或应比较的 `company.id` 时 fail safe 为 Modify。
+6. ignored/audit-only MAC 与 unreliable serial 不产生虚假 Modify；实际 payload MAC 不同会产生 Modify。
+7. 现有 Add、Blocked、legacy asset-tag migration 与真正 update tests 继续通过；所有 HTTP 仍使用 `StubHttpMessageHandler`，不得调用真实 Snipe-IT API。
+8. 成功 Modify 必须断言 `ILogger<SnipeImporter>`、per-record progress 与 executed action 都包含同一稳定顺序的 `Changed fields`；mocked PATCH 失败必须断言没有成功变更日志。
+
+## 23. Company pagination and importer decomposition
+
+### 23.1 Concrete types
+
+- Keep `public sealed class SnipeImporter : ISnipeImporter` and both existing constructors as the public facade.
+- Add internal `SnipeApiClient` to own request construction, Bearer authentication, GET retry/backoff, mutation no-retry semantics, HTTP-error classification and JSON lifetime. Operation-specific business-envelope validation remains shared with the facade.
+- Add internal `SnipeSnapshotLoader` to own hardware/model/company/fieldset snapshot loading and progress. Its company page size is `500` and maximum page count remains `10000`.
+- Add internal `SnipeImportPlanner` to coordinate reference resolution, model maintenance, asset matching/diff and immutable planned actions after facade-level record validation.
+- Add internal `SnipeImportExecutor` to coordinate ordered execution and per-asset partial-result accounting; shared reference mutations remain the pre-asset execution gate.
+- Shared run models used across these components remain internal and must each carry a class comment describing ownership and lifetime.
+
+### 23.2 Company paging algorithm
+
+For page 1 request `companies?limit=500&offset=0`, require `rows` and integer `total`, parse every row to a valid id/name entity, and save the first `total`. Advance `offset` by the returned row count. Continue while accumulated count is less than the first total. Every subsequent response must report the same total. A zero-row page before completion, changed total, invalid row, more than 10000 pages, or final count mismatch throws `SnipeApiException("SnipeImport.IncompleteCompanySnapshot", safeMessage)` before any mutation.
+
+### 23.3 Compatibility tests
+
+Mocked tests must cover 501+ companies over multiple pages, stable offsets, premature empty page, changed total, maximum pages and exact completion. Existing request paths/payloads, business-error parsing, cancellation and result counters must remain unchanged after decomposition. Delete the standalone normalizer tests only after equivalent importer planner/executor coverage exists.
+
+## 24. Atera-managed Hardware stale comparison and soft-delete
+
+### 24.1 Contract changes
+
+Update `src/AteraSnipeSync.Core/SnipeIt/SnipeImportResult.cs`:
+
+```csharp
+public required int DeletedAssets { get; init; }
+```
+
+`ImportRunContext` adds `public int DeletedAssets { get; set; }`; `ToResult` copies it to `SnipeImportResult.DeletedAssets`.
+
+Update `src/AteraSnipeSync.Core/SnipeIt/ImportAction.cs`:
+
+```csharp
+public string? Identifier { get; init; }
+```
+
+For delete actions `Identifier` is the invariant-culture decimal Snipe-IT asset id. Existing create/update/skip callers may leave it null. `JsonFileSyncStatusStore.AddImportAction` copies the optional value to `SyncHistoryItem.Identifier`.
+
+Update count projections:
+
+```csharp
+// JsonFileSyncStatusStore.CreateHistoryDocument
+AssetsDeleted = result.ImportResult?.DeletedAssets ?? 0;
+
+// WorkerResultSanitizer.CreateSummary
+Deleted = result.ImportResult?.DeletedAssets ?? 0;
+```
+
+Do not change the existing JSON/IPC property names `assetsDeleted` and `deleted`.
+
+### 24.2 Internal planning models
+
+Add nested records under the partial `SnipeImporter` implementation; each requires a concise role comment:
+
+```csharp
+private sealed record PlannedAssetDeletion(
+    SnipeAssetMatch Asset,
+    string AteraAgentId,
+    string Reason);
+
+private sealed record SnipeImportPlanningResult(
+    IReadOnlyList<PlannedRecord> Assets,
+    IReadOnlyList<PlannedAssetDeletion> Deletions);
+```
+
+`Reason` is the fixed safe value `MissingFromAtera`; it is not copied from either API response.
+
+Change planner signature to:
+
+```csharp
+public Task<SnipeImportPlanningResult> PlanAssetsAsync(
+    IReadOnlyList<SnipeAssetImportRecord> allRecords,
+    IList<SnipeAssetImportRecord> validRecords,
+    ImportRunContext context,
+    IProgress<SyncProgressUpdate>? progress,
+    CancellationToken cancellationToken);
+```
+
+`allRecords` is required for the active tag set so a source record that later fails validation/reference/matching still protects its target tag. `validRecords` continues to drive reference and create/update planning. Any source failure disables the complete deletion list for that run.
+
+For an empty batch the planner calls `LoadHardwareLookupAsync` exactly once. For a non-empty batch it calls the loader once only when at least one record is matchable; an entirely blocked batch returns no delete plan without another API request. If snapshot load fails, it applies the existing target-specific failure to every matchable record; for an empty batch it adds one safe run-level asset snapshot failure. It returns no asset or delete plan, so `RetainReferencesFor([])` removes pending reference writes and no mutation begins.
+
+### 24.3 Ownership and comparison helpers
+
+Add these private static helpers to `SnipeImporter`:
+
+```csharp
+private static IReadOnlyList<PlannedAssetDeletion> PlanStaleAssetDeletions(
+    IReadOnlyList<SnipeAssetImportRecord> allRecords,
+    SnipeHardwareLookup hardwareLookup);
+
+private static bool TryReadAteraManagedAssetTag(
+    string? assetTag,
+    out string normalizedAssetTag,
+    out string ateraAgentId);
+```
+
+Rules:
+
+1. Normalize source and target tags with the existing trim/HTML-decode response pipeline; identity comparison uses `StringComparer.OrdinalIgnoreCase`.
+2. `TryReadAteraManagedAssetTag` succeeds only when the trimmed target tag begins with `ATERA-`, using `StringComparison.OrdinalIgnoreCase`.
+3. `ateraAgentId` is the trimmed suffix after `ATERA-`; an empty suffix remains safe display text `<missing>` but the asset is still inside the explicit ownership prefix.
+4. Build the active set from every nonblank normalized `allRecords[i].AssetTag`, before any per-record failure filtering.
+5. A target is stale only when it is Atera-managed, its full normalized tag is absent from the active set, and the run has no source validation/reference/matching/duplicate-target failure.
+6. Do not consult name, serial, MAC, notes, company, model, status, first-added marker, or match score when deciding ownership/deletion.
+7. Return candidates ordered by `Asset.Id` ascending for deterministic CSV, progress, mutation, action, and log order.
+
+This rule intentionally treats a manually created asset using an `ATERA-` tag as tool-managed. The asset-tag namespace is therefore an operator-visible ownership contract.
+
+### 24.4 Dry-run, CSV, and execution
+
+Change these signatures:
+
+```csharp
+private static void ApplyDryRunPlan(
+    IReadOnlyList<PlannedRecord> plannedRecords,
+    IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
+    ImportRunContext context);
+
+private static SnipeImportPreflightPlan BuildPreflightPlan(
+    IReadOnlyList<PlannedRecord> plannedRecords,
+    IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
+    ImportRunContext context);
+
+public Task ExecuteDeletionsAsync(
+    IReadOnlyList<PlannedAssetDeletion> plannedDeletions,
+    ImportRunContext context,
+    IProgress<SyncProgressUpdate>? progress,
+    CancellationToken cancellationToken);
+```
+
+`BuildPreflightPlan` appends one `SnipeAssetPreflightRow` per deletion with:
+
+- `Operation = "Delete"`
+- `AssetTag = deletion.Asset.AssetTag ?? "<missing>"`
+- `Name = deletion.Asset.Name`
+- snapshot serial/company/model/category where available
+- `ExistingAssetId = deletion.Asset.Id`
+- `ExistingAssetTag = deletion.Asset.AssetTag`
+- `ChangeReasons = "MissingFromAtera"`
+- conflict and failure columns null
+
+Dry-run adds one planned delete action per candidate, increments `DeletedAssets`, and sends no DELETE. Real execution occurs only after the reference gate and `ExecuteAssetsAsync` complete. Cancellation is checked before each DELETE; once dispatched, existing mutation cancellation/no-retry semantics apply.
+
+Add owner method:
+
+```csharp
+private Task DeleteAssetAsync(
+    PlannedAssetDeletion deletion,
+    ImportRunContext context,
+    CancellationToken cancellationToken);
+```
+
+It sends `HttpMethod.Delete`, path `hardware/{deletion.Asset.Id}`, payload null, operation containing the safe asset tag, then calls `EnsureBusinessSuccess`. Only after success does it add an executed action and increment `DeletedAssets`.
+
+### 24.5 Audit and failure behavior
+
+Extend `ImportRunContext.AddPlannedAction` and `AddExecutedAction` with optional `string? identifier = null`, or add equivalent delete-specific helpers. Delete action message format must include these labels and safe values:
+
+```text
+AssetId={id}; AssetTag={tag}; Name={name}; AteraAgentId={agentId}; Reason=MissingFromAtera.
+```
+
+Add:
+
+```csharp
+public void AddDeletionFailure(
+    PlannedAssetDeletion deletion,
+    string code,
+    string message);
+```
+
+It increments `FailedAssets` once, emits an `ImportFailure` with `TargetType = "Asset"` and target name equal to tag-or-name, and prefixes/appends the same safe audit identity fields. It does not increment `DeletedAssets` or add a successful Delete action.
+
+`ExecuteDeletionsAsync` catches `SnipeApiException` and `JsonException` per candidate, calls `AddDeletionFailure`, reports progress, logs Warning, and continues. Success logging uses Information. Both templates expose structured fields:
+
+```text
+AssetId, AssetTag, AssetName, AteraAgentId, DeleteReason, DeleteResult
+```
+
+`DeleteResult` is `Succeeded` or the safe failure code. Do not log notes, serialized payload, Authorization headers, token, or raw response body.
+
+The completed importer log adds `Deleted={DeletedAssets}` alongside Created/Updated/Failed. Progress includes `Deleting stale Snipe-IT asset {current}/{total}` and a terminal success/failure message without secrets.
+
+### 24.6 Required mocked tests
+
+Add tests to `SnipeImporterTests` using only `StubHttpMessageHandler`:
+
+1. current `ATERA-1001` plus stale `ATERA-9999` and manual `MANUAL-1` → only id for `ATERA-9999` receives DELETE;
+2. ownership and active-set comparisons ignore tag case and surrounding whitespace;
+3. dry-run reports `DeletedAssets = 1`, planned Delete action and Delete CSV row, with zero DELETE requests;
+4. empty Atera batch still loads hardware and deletes all `ATERA-` assets while preserving all non-prefixed assets;
+5. source record blocked after validation/reference planning still protects the identical current tag;
+6. malformed/incomplete hardware snapshot produces no POST/PATCH/DELETE;
+7. first DELETE business/HTTP failure increments `FailedAssets`, keeps `DeletedAssets` unchanged for that record, logs key fields, and the next candidate still executes;
+8. success log/action/history contain asset id, tag, name, parsed agent id and `MissingFromAtera`, while a sentinel token and notes string are absent;
+9. `JsonFileSyncStatusStoreTests` assert `assetsDeleted` and `assets.deleted` use real importer data and preserve `Identifier`;
+10. `WorkerCommandHandlerTests`/sanitizer assertions expect the real `DeletedAssets` count instead of fixed zero.
+
+All existing create/update/no-op, preflight, cancellation, HTTP classification, pagination and partial-result tests must continue to pass. No automated test may call a real Atera or Snipe-IT API.

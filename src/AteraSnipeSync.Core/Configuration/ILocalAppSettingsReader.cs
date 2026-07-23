@@ -7,8 +7,7 @@ namespace AteraSnipeSync.Core.Configuration;
 /// </summary>
 public interface ILocalAppSettingsReader
 {
-    Task<ManualSyncSettings?> LoadWorkerSyncSettingsAsync(CancellationToken cancellationToken);
+    Task<SyncAppSettings?> LoadWorkerSyncSettingsAsync(CancellationToken cancellationToken);
     Task<SyncScheduleOptions?> LoadSyncScheduleOptionsAsync(CancellationToken cancellationToken);
-    Task<bool> LoadSyncDryRunAsync(CancellationToken cancellationToken);
     Task<NotificationConfig> LoadNotificationConfigAsync(CancellationToken cancellationToken);
 }

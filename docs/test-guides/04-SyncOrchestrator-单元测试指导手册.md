@@ -1,5 +1,9 @@
 # Sync Orchestrator - 单元测试指导手册
 
+## 2026-07 Required DryRun result coverage
+
+`RunOnceAsync_CallsStagesInOrder_AndReturnsSuccessfulResult`, `RunOnceAsync_StopsBeforeMappingAndImport_WhenPullFails`, and `RunOnceAsync_StopsBeforeImport_WhenMappingFails` assert that required `SyncRunResult.DryRun` is preserved on success and every early-return path. The tests use fakes only.
+
 ## 1. 测试目标
 
 本测试手册覆盖 Module4 Sync Orchestrator 当前实现：
@@ -7,7 +11,7 @@
 - `SyncOrchestrator` 按固定顺序调用 Atera Pull、Reconstruction、Snipe Import
 - 任一阶段失败时正确短路
 - warnings 从各阶段聚合到 `SyncRunResult.Warnings`
-- import asset failures 转换为 run-level `SyncFailure`
+- import asset failures 转换为 run-level `SyncFailure`，但完整 pipeline 仍为 completed
 - `SyncRunOptions.DryRun` 正确传递到 `SnipeImportOptions.DryRun`
 - cancellation 不被包装成普通失败
 - started/finished timestamps 可预测
@@ -84,12 +88,13 @@ Passed! - Failed: 0, Passed: 72, Skipped: 0, Total: 72
 3. `RunOnceAsync_StopsBeforeMappingAndImport_WhenPullFails`
 4. `RunOnceAsync_StopsBeforeImport_WhenMappingFails`
 5. `RunOnceAsync_ReturnsFailureAndKeepsPriorResults_WhenImportThrows`
-6. `RunOnceAsync_ConvertsImportFailuresToRunFailures`
+6. `RunOnceAsync_CompletesAndKeepsRunFailures_WhenImportReturnsRecordFailures`
 7. `RunOnceAsync_AppliesSyncDryRunToSnipeOptions`
 8. `RunOnceAsync_RethrowsOperationCanceledException`
 9. `RunOnceAsync_ReportsStageProgress`
 10. `Constructor_ThrowsArgumentNullException_ForNullDependencies`
 11. `RunOnceAsync_ThrowsArgumentNullException_WhenRequestNull`
+12. `RunOnceAsync_ReturnsFailedRun_WhenImportResultIsCancelled`
 
 ## 6. 重点断言
 
@@ -148,8 +153,10 @@ pull -> map -> import
 当 `SnipeImportResult.Failures` 非空：
 
 - `ImportResult` 必须保留
-- `Success = false`
+- `Success = true`，因为 pipeline 已完整结束
 - 每条 `ImportFailure` 转换为 `Stage = "SnipeImport"` 的 `SyncFailure`
+
+当 import 正常返回但 `Cancelled = true` 时，`ImportResult` 仍保留，`Success = false`。
 
 ### 6.6 Dry Run
 

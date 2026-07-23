@@ -233,7 +233,7 @@ Rules:
 - `StartedAtUtc` is `SyncRunResult.StartedAt.ToUniversalTime()`
 - `FinishedAtUtc` is `SyncRunResult.FinishedAt.ToUniversalTime()`
 - `DurationMs` is non-negative difference between finished and started
-- `DryRun` is `SyncRunResult.ImportResult?.DryRun ?? false`
+- `DryRun` is `SyncRunResult.DryRun`; it must not be inferred from whether import began.
 
 ### 6.3 `SyncHistorySummary`
 
@@ -280,9 +280,9 @@ Rules:
 - `Mapped = result.ImportBatch?.Summary.MappedAssetCount ?? 0`
 - `AssetsCreated = result.ImportResult?.CreatedAssets ?? 0`
 - `AssetsUpdated = result.ImportResult?.UpdatedAssets ?? 0`
-- `AssetsDeleted = 0` in first implementation because project policy does not delete
+- `AssetsDeleted = result.ImportResult?.DeletedAssets ?? 0`
 - `AssetsSkipped = result.ImportResult?.SkippedAssets ?? 0`
-- `AssetsFailed = result.ImportResult?.FailedAssets ?? result.Failures.Count`
+- `AssetsFailed = result.ImportResult?.FailedAssets ?? 0`; run/pipeline failures are counted only by `FailureCount`.
 - `CompaniesCreated = result.ImportResult?.CreatedCompanies ?? 0`
 - `CompaniesUpdated = 0` unless future import result exposes structured company updates
 - `CompaniesDeleted = 0`
@@ -642,7 +642,7 @@ Run info:
 Result = result.Success ? "Success" : "Failed";
 StartedAtUtc = result.StartedAt.ToUniversalTime();
 FinishedAtUtc = result.FinishedAt.ToUniversalTime();
-DryRun = result.ImportResult?.DryRun ?? false;
+DryRun = result.DryRun;
 DurationMs = Math.Max(0, (long)(FinishedAtUtc - StartedAtUtc).TotalMilliseconds);
 ```
 
@@ -653,9 +653,9 @@ Pulled = result.PullResult?.Summary.AgentCount ?? 0;
 Mapped = result.ImportBatch?.Summary.MappedAssetCount ?? 0;
 AssetsCreated = result.ImportResult?.CreatedAssets ?? 0;
 AssetsUpdated = result.ImportResult?.UpdatedAssets ?? 0;
-AssetsDeleted = 0;
+AssetsDeleted = result.ImportResult?.DeletedAssets ?? 0;
 AssetsSkipped = result.ImportResult?.SkippedAssets ?? 0;
-AssetsFailed = result.ImportResult?.FailedAssets ?? result.Failures.Count;
+AssetsFailed = result.ImportResult?.FailedAssets ?? 0;
 CompaniesCreated = result.ImportResult?.CreatedCompanies ?? 0;
 CompaniesUpdated = 0;
 CompaniesDeleted = 0;
@@ -747,7 +747,7 @@ Implementation is accepted when:
 - each run writes a distinct `SyncResult_*.json`
 - file names use UTC finished timestamps
 - JSON contains structured resource change sets for assets, companies, models, manufacturers, and categories
-- deleted arrays are present and empty under current no-delete policy
+- deleted arrays are always present; asset delete actions are preserved with name, identifier, execution flag and safe message
 - `ReadLatestAsync` reads newest valid history and computes latest success time from history
 - missing/empty/malformed history does not crash `ReadLatestAsync`
 - no secrets or raw API payloads are persisted
@@ -764,3 +764,32 @@ public TimeSpan LockTimeout { get; init; } = TimeSpan.FromSeconds(15);
 ```
 
 新增 `internal static class AtomicFileWriter`，`WriteAllTextAsync(path, contents, token)` 先写 `{path}.{guid}.tmp`，flush 后同卷 `File.Move(temp, path, true)`，finally 清理 temp。`JsonFileSyncStatusStore` 在现有 semaphore 外获取 `<status-root>/.status.lock` 的 exclusive `FileStream(FileShare.None)`；timeout 抛 `TimeoutException`。保存 report/latest 成功后按 last-write UTC 删除超龄文件，再保留最新 `MaxHistoryFiles` 个。锁与清理都必须有单元测试。
+
+## 17. 2026-07 Completion classification and deleted snapshot count
+
+`JsonFileSyncStatusStore.CreateHistoryDocument` classifies only from the orchestrator completion contract：
+
+1. `result.Success == true` → `"Success"`。
+2. Otherwise → `"Failed"`。
+
+Resource success counters must not alter this classification. A completed run may contain non-zero failed counts and failure arrays; an incomplete/fatal run remains `Failed` even when some resource actions completed before the interruption. New reports must not write `PartialSuccess`.
+
+`assetsSkipped` remains the persisted schema-v1 name and means unchanged/no HTTP write；do not rename the JSON property without a schema migration。`assetsDeleted` maps the real `SnipeImportResult.DeletedAssets` count。
+
+`SyncStatusSnapshot` adds `public required int Deleted { get; init; }` mapped from `Summary.AssetsDeleted`。`Skipped` remains mapped from `AssetsSkipped` for wire compatibility and is labeled `No change` only at the Tray presentation boundary。`IsSuccess` matches `Success`; a completed run with record failures advances `LastSuccessAt`, while an incomplete/fatal run retains `LastError`。
+
+Required tests：completed run with record failures → Success and preserves structured failure details；failed with no successful counters → Failed；failed with created/updated/skipped/deleted or reference success counters → Failed；snapshot exposes the real Deleted count and preserves the first failure for fatal runs；deleted history item preserves the Snipe-IT asset id in `Identifier`。
+
+## 18. Dry-run and failure-count source of truth
+
+`SyncRunResult` adds `public required bool DryRun { get; init; }`. `SyncOrchestrator.CreateResult` copies `request.Sync.DryRun` into every success, early-return and exception result.
+
+`JsonFileSyncStatusStore`、`WorkerResultSanitizer` and `NotificationRequestFactory` use exactly:
+
+```csharp
+var failedAssets = result.ImportResult?.FailedAssets ?? 0;
+var dryRun = result.DryRun;
+var failureCount = result.Failures.Count;
+```
+
+No caller-supplied DryRun fallback remains. Required tests cover Atera Pull failure, Mapping failure, import-stage exception without `ImportResult`, structured asset failure and successful dry-run projection across history, IPC and notification text.

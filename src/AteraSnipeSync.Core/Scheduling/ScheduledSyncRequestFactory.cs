@@ -4,12 +4,12 @@ using AteraSnipeSync.Core.Sync;
 namespace AteraSnipeSync.Core.Scheduling;
 
 /// <summary>
-/// Produces scheduler-safe sync requests by marking the run as scheduled and disabling manual preflight CSV output.
+/// Produces scheduler-safe real-sync requests by marking the run as scheduled and disabling manual preflight CSV output.
 /// </summary>
 public static class ScheduledSyncRequestFactory
 {
     /// <summary>
-    /// Clones a base sync request for unattended execution and guarantees that no manual preflight CSV is generated.
+    /// Clones a base request for unattended real execution, disables dry-run, and guarantees no manual preflight CSV is generated.
     /// </summary>
     public static SyncRunRequest CreateScheduledRequest(SyncRunRequest baseRequest)
     {
@@ -23,7 +23,7 @@ public static class ScheduledSyncRequestFactory
             {
                 BaseUrl = baseRequest.SnipeIt.BaseUrl,
                 ApiToken = baseRequest.SnipeIt.ApiToken,
-                DryRun = baseRequest.SnipeIt.DryRun,
+                DryRun = false,
                 CreateMissingCompanies = baseRequest.SnipeIt.CreateMissingCompanies,
                 CreateMissingModels = baseRequest.SnipeIt.CreateMissingModels,
                 MacAddressCustomFieldDbColumnName = baseRequest.SnipeIt.MacAddressCustomFieldDbColumnName,
@@ -39,7 +39,7 @@ public static class ScheduledSyncRequestFactory
             },
             Sync = new SyncRunOptions
             {
-                DryRun = baseRequest.Sync.DryRun,
+                DryRun = false,
                 TriggeredBy = "scheduled"
             }
         };

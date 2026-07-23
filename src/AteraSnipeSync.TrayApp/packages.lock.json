@@ -2,6 +2,18 @@
   "version": 1,
   "dependencies": {
     "net10.0-windows7.0": {
+      "AntdUI": {
+        "type": "Direct",
+        "requested": "[2.4.3, )",
+        "resolved": "2.4.3",
+        "contentHash": "hzdWluqUckjOIgtnArryfZgfHrbUPDhK4qZAt9nrAmkF0UnptmQcRm3wOcVMBr88c0mBfwxoczDzuS/txoWacw=="
+      },
+      "System.ServiceProcess.ServiceController": {
+        "type": "Direct",
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "9tI/EtlMimwJn9EEtbqFrVqGCD98VfVdnW6UekC7/YHO5Ky/LMUfXibBv9+AV8g9u7uim20oHgiOqzaeEWAhqg=="
+      },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
         "resolved": "10.0.10",
@@ -22,6 +34,13 @@
         }
       }
     },
-    "net10.0-windows7.0/win-x64": {}
+    "net10.0-windows7.0/win-x64": {
+      "System.ServiceProcess.ServiceController": {
+        "type": "Direct",
+        "requested": "[10.0.10, )",
+        "resolved": "10.0.10",
+        "contentHash": "9tI/EtlMimwJn9EEtbqFrVqGCD98VfVdnW6UekC7/YHO5Ky/LMUfXibBv9+AV8g9u7uim20oHgiOqzaeEWAhqg=="
+      }
+    }
   }
 }

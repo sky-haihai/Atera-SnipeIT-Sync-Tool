@@ -1,3 +1,5 @@
+using AteraSnipeSync.Core.Configuration;
+
 namespace AteraSnipeSync.Core.Notifications;
 
 /// <summary>
@@ -10,5 +12,6 @@ public interface INotificationPublisher
     /// </summary>
     Task PublishAsync(
         NotificationRequest request,
+        NotificationConfig config,
         CancellationToken cancellationToken);
 }

@@ -31,6 +31,7 @@ internal sealed record SnipeAssetPreflightRow(
     string? ConflictingAssets,
     string? FailureCode,
     string? FailureMessage,
+    string? ChangeReasons,
     string? DeviceType);
 
 /// <summary>

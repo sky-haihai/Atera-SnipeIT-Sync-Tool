@@ -5,6 +5,7 @@ namespace AteraSnipeSync.Core.Notifications;
 /// </summary>
 public static class NotificationEventTypes
 {
+    public const string NotificationTest = "NotificationTest";
     public const string ScheduledSyncCompleted = "ScheduledSyncCompleted";
     public const string ScheduledSyncFailed = "ScheduledSyncFailed";
     public const string ManualSyncCompleted = "ManualSyncCompleted";

@@ -1,0 +1,180 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Atera Snipe-IT Auto Sync"
+           Manufacturer="Vue IT Inc."
+           Version="$(InstallerVersion)"
+           ProductCode="$(InstallerProductCode)"
+           UpgradeCode="549B4FDF-C466-4CF0-A356-0EC6380C24CD"
+           Scope="perMachine"
+           Platform="x64"
+           Language="1033"
+           Codepage="1252">
+    <SummaryInformation Description="Atera to Snipe-IT automatic synchronization service and tray application."
+                        Manufacturer="Vue IT Inc." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Atera Snipe-IT Auto Sync is already installed." />
+
+    <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="0" />
+    <Property Id="REMOVELOCALDATA" Secure="yes" />
+    <Property Id="ATERASNIPESYNC_PROGRAMDATA_ROOT" Secure="yes">
+      <RegistrySearch Id="RememberedProgramDataRootSearch"
+                      Root="HKLM"
+                      Key="Software\Vue IT Inc.\AteraSnipeSync"
+                      Name="ProgramDataRoot"
+                      Type="raw"
+                      Bitness="always64" />
+    </Property>
+
+    <Icon Id="ProductIcon" SourceFile="..\..\src\AteraSnipeSync.TrayApp\Assets\tray-icon.ico" />
+    <UIRef Id="AteraSnipeSync_InstallUI" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="AteraSnipeSync">
+        <Component Id="WorkerServiceComponent"
+                   Guid="1E7FEAB5-1EA1-4E8B-AE07-30B80DF653AA"
+                   Bitness="always64">
+          <File Id="WorkerExecutable"
+                Source="!(bindpath.PublishRoot)\AteraSnipeSync.WorkerService.exe"
+                KeyPath="yes" />
+          <ServiceInstall Id="WorkerServiceInstall"
+                          Name="AteraSnipeItAutoSync"
+                          DisplayName="Atera Snipe-IT Auto Sync"
+                          Description="Synchronizes Atera managed devices into Snipe-IT."
+                          Type="ownProcess"
+                          Start="auto"
+                          ErrorControl="normal"
+                          Account="LocalSystem"
+                          Vital="yes" />
+          <ServiceControl Id="WorkerServiceControl"
+                          Name="AteraSnipeItAutoSync"
+                          Start="install"
+                          Stop="both"
+                          Remove="uninstall"
+                          Wait="yes" />
+        </Component>
+
+        <Component Id="TrayApplicationComponent"
+                   Guid="9BCBD7CC-D8D8-4755-8E4E-A91CBB1AE448"
+                   Bitness="always64">
+          <File Id="TrayExecutable"
+                Source="!(bindpath.PublishRoot)\AteraSnipeSync.TrayApp.exe"
+                KeyPath="yes">
+            <Shortcut Id="StartMenuTrayShortcut"
+                      Directory="ApplicationStartMenuFolder"
+                      Name="Atera Snipe-IT Auto Sync"
+                      Description="Open the Atera Snipe-IT Auto Sync tray application."
+                      WorkingDirectory="INSTALLFOLDER" />
+          </File>
+          <RegistryValue Root="HKLM"
+                         Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                         Name="AteraSnipeSync.TrayApp"
+                         Value="&quot;[INSTALLFOLDER]AteraSnipeSync.TrayApp.exe&quot;"
+                         Type="string"
+                         Bitness="always64" />
+        </Component>
+
+        <Files Include="!(bindpath.PublishRoot)\**">
+          <Exclude Files="!(bindpath.PublishRoot)\AteraSnipeSync.WorkerService.exe" />
+          <Exclude Files="!(bindpath.PublishRoot)\AteraSnipeSync.TrayApp.exe" />
+          <Exclude Files="!(bindpath.PublishRoot)\**\*.pdb" />
+          <Exclude Files="!(bindpath.PublishRoot)\**\appsettings.Development.json" />
+          <Exclude Files="!(bindpath.PublishRoot)\**\appsettings.local.json" />
+          <Exclude Files="!(bindpath.PublishRoot)\**\*.local.json" />
+          <Exclude Files="!(bindpath.PublishRoot)\**\*Tests*" />
+        </Files>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationStartMenuFolder" Name="Atera Snipe-IT Auto Sync">
+        <Component Id="StartMenuFolderComponent"
+                   Guid="6F8DDB1A-0E1B-46E9-893C-1664DD166A25"
+                   Bitness="always64">
+          <RemoveFolder Id="RemoveApplicationStartMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM"
+                         Key="Software\Vue IT Inc.\AteraSnipeSync"
+                         Name="StartMenuFolder"
+                         Value="1"
+                         Type="integer"
+                         Bitness="always64"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ProgramDataRoot" Name="AteraSnipeSync">
+        <Component Id="ProgramDataAclComponent"
+                   Guid="E522F6C9-8C89-42F7-9686-29F54D5E6777"
+                   Bitness="always64"
+                   Permanent="yes"
+                   KeyPath="yes">
+          <CreateFolder>
+            <util:PermissionEx User="SYSTEM" Domain="NT AUTHORITY" GenericAll="yes" />
+            <util:PermissionEx User="Administrators" Domain="BUILTIN" GenericAll="yes" />
+            <util:PermissionEx User="Users"
+                               Domain="BUILTIN"
+                               Read="yes"
+                               Write="yes"
+                               Append="yes"
+                               CreateFile="yes"
+                               CreateChild="yes"
+                               Delete="yes"
+                               DeleteChild="yes"
+                               ReadAttributes="yes"
+                               WriteAttributes="yes"
+                               ReadExtendedAttributes="yes"
+                               WriteExtendedAttributes="yes"
+                               ReadPermission="yes"
+                               Traverse="yes"
+                               Synchronize="yes"
+                               Inheritable="yes" />
+          </CreateFolder>
+        </Component>
+
+        <Component Id="ProgramDataManagementComponent"
+                   Guid="C23FB940-AB60-4ECF-8C2B-92B0462ACDCD"
+                   Bitness="always64">
+          <RegistryValue Root="HKLM"
+                         Key="Software\Vue IT Inc.\AteraSnipeSync"
+                         Name="ProgramDataRoot"
+                         Value="[ProgramDataRoot]"
+                         Type="string"
+                         Bitness="always64"
+                         KeyPath="yes" />
+          <util:RemoveFolderEx Id="RemoveAllLocalData"
+                               Property="ATERASNIPESYNC_PROGRAMDATA_ROOT"
+                               On="uninstall"
+                               Condition="REMOVELOCALDATA=1 AND REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+        </Component>
+
+        <Directory Id="LogsFolder" Name="Logs">
+          <Component Id="LogsFolderComponent"
+                     Guid="20F570FC-0539-4FE4-A13D-A3DB27D08C9D"
+                     Permanent="yes"
+                     KeyPath="yes">
+            <CreateFolder />
+          </Component>
+        </Directory>
+        <Directory Id="HistoryFolder" Name="History">
+          <Component Id="HistoryFolderComponent"
+                     Guid="7891C16C-469C-4CD5-989A-C1754783DC70"
+                     Permanent="yes"
+                     KeyPath="yes">
+            <CreateFolder />
+          </Component>
+        </Directory>
+        <Directory Id="PreflightFolder" Name="Preflight">
+          <Component Id="PreflightFolderComponent"
+                     Guid="61322481-7C51-401B-BBF9-1D5F9B1A735B"
+                     Permanent="yes"
+                     KeyPath="yes">
+            <CreateFolder />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+  </Package>
+</Wix>

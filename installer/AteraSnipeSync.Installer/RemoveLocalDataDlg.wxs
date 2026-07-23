@@ -1,0 +1,80 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="AteraSnipeSync_InstallUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="12" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <Dialog Id="RemoveLocalDataDlg"
+              Width="370"
+              Height="270"
+              Title="[ProductName] Setup">
+        <Control Id="Title"
+                 Type="Text"
+                 X="15"
+                 Y="15"
+                 Width="340"
+                 Height="20"
+                 Transparent="yes"
+                 NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}Remove Atera Snipe-IT Auto Sync" />
+        <Control Id="Description"
+                 Type="Text"
+                 X="20"
+                 Y="50"
+                 Width="330"
+                 Height="36"
+                 Text="The application will be removed. By default, local data is preserved for a later reinstall." />
+        <Control Id="LocalDataPath"
+                 Type="Text"
+                 X="20"
+                 Y="92"
+                 Width="330"
+                 Height="22"
+                 Text="Local data location: %ProgramData%\AteraSnipeSync" />
+        <Control Id="RemoveLocalDataCheckBox"
+                 Type="CheckBox"
+                 X="20"
+                 Y="127"
+                 Width="330"
+                 Height="38"
+                 Property="REMOVELOCALDATA"
+                 CheckBoxValue="1"
+                 Text="Delete local configuration, credentials, logs, history, preview files, and scheduling state" />
+        <Control Id="Warning"
+                 Type="Text"
+                 X="20"
+                 Y="173"
+                 Width="330"
+                 Height="30"
+                 Text="This deletion cannot be undone. Leave the option unchecked to keep all local data." />
+        <Control Id="Uninstall"
+                 Type="PushButton"
+                 X="210"
+                 Y="243"
+                 Width="70"
+                 Height="17"
+                 Default="yes"
+                 Text="Uninstall">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel"
+                 Type="PushButton"
+                 X="285"
+                 Y="243"
+                 Width="70"
+                 Height="17"
+                 Cancel="yes"
+                 Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="RemoveLocalDataDlg"
+              After="CostFinalize"
+              Condition="Installed AND REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      </InstallUISequence>
+    </UI>
+  </Fragment>
+</Wix>

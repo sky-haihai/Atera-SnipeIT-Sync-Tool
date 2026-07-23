@@ -1,0 +1,26 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <AcceptEula>wix7</AcceptEula>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <OutputType>Package</OutputType>
+    <OutputName>AteraSnipeSync-$(Version)-win-x64</OutputName>
+    <OutputPath>$(ReleaseOutputRoot)</OutputPath>
+    <SuppressValidation>false</SuppressValidation>
+    <DefineConstants>InstallerVersion=$(Version);InstallerProductCode=$(ProductCode)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="7.0.0" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="7.0.0" />
+    <BindPath Include="$(PublishRoot)" BindName="PublishRoot" />
+  </ItemGroup>
+
+  <Target Name="ValidatePackagingProperties" BeforeTargets="Build">
+    <Error Condition="'$(Version)' == ''" Text="Version is required." />
+    <Error Condition="'$(ProductCode)' == ''" Text="ProductCode is required." />
+    <Error Condition="'$(PublishRoot)' == ''" Text="PublishRoot is required." />
+    <Error Condition="!Exists('$(PublishRoot)\AteraSnipeSync.WorkerService.exe')" Text="PublishRoot does not contain the Worker executable." />
+    <Error Condition="!Exists('$(PublishRoot)\AteraSnipeSync.TrayApp.exe')" Text="PublishRoot does not contain the Tray executable." />
+    <Error Condition="'$(ReleaseOutputRoot)' == ''" Text="ReleaseOutputRoot is required." />
+  </Target>
+</Project>

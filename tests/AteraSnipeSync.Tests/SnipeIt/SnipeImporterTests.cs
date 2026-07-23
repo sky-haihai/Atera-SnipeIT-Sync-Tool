@@ -5,6 +5,7 @@ using AteraSnipeSync.Core.Atera;
 using AteraSnipeSync.Core.Common;
 using AteraSnipeSync.Core.Mapping;
 using AteraSnipeSync.Core.SnipeIt;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AteraSnipeSync.Tests.SnipeIt;
@@ -49,6 +50,69 @@ public sealed class SnipeImporterTests
         Assert.Empty(result.Failures);
         Assert.DoesNotContain(handler.Requests, request => request.PathAndQuery.Contains("byserial", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(handler.Requests, request => request.Method.Method == "PATCH" && request.PathAndQuery == "/api/v1/hardware/501");
+    }
+
+    [Fact]
+    public async Task ImportAsync_LogsChangedFieldsAfterSuccessfulAssetUpdate()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                501,
+                "Old Device Name",
+                "TAG-001",
+                "SN-001",
+                "66:55:44:33:22:11",
+                notes: "Old business note."));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(501));
+        var logger = new CapturingLogger<SnipeImporter>();
+        var importer = new SnipeImporter(new HttpClient(handler), logger);
+        var updates = new List<SyncProgressUpdate>();
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(macAddresses: ["00-11-22-33-44-55"])),
+            CreateOptions(),
+            CancellationToken.None,
+            new CapturingProgress(updates));
+
+        const string changedFields = "Changed fields: Name, MacAddress, Notes.";
+        var action = Assert.Single(result.Actions);
+        Assert.Equal("Update", action.ActionType);
+        Assert.Contains(changedFields, action.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Information
+            && entry.Message == $"Updated Snipe-IT asset 501 (TAG-001). {changedFields}");
+        Assert.Contains(updates, update =>
+            update.Message == $"Updated Snipe-IT asset 1/1: Device 1. {changedFields}");
+    }
+
+    [Fact]
+    public async Task ImportAsync_DoesNotLogChangedFields_WhenAssetUpdateFails()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(handler, Asset(501, "Old Device Name", "TAG-001", "SN-001"));
+        handler.QueueResponse(
+            HttpStatusCode.OK,
+            """{ "status": "error", "messages": "Asset update failed." }""");
+        var logger = new CapturingLogger<SnipeImporter>();
+        var importer = new SnipeImporter(new HttpClient(handler), logger);
+        var updates = new List<SyncProgressUpdate>();
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(),
+            CancellationToken.None,
+            new CapturingProgress(updates));
+
+        Assert.Equal(1, result.FailedAssets);
+        Assert.Empty(result.Actions);
+        Assert.DoesNotContain(logger.Entries, entry =>
+            entry.Message.Contains("Changed fields:", StringComparison.Ordinal));
+        Assert.DoesNotContain(updates, update =>
+            update.Message.StartsWith("Updated Snipe-IT asset", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -457,6 +521,157 @@ public sealed class SnipeImporterTests
         Assert.Equal(1, result.CreatedModels);
         Assert.Equal(1, result.CreatedAssets);
         Assert.All(result.Actions, action => Assert.False(action.WasExecuted));
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
+    }
+
+    [Fact]
+    public async Task ImportAsync_PreviewOmitsUnchangedAssetFromPreflightCsv()
+    {
+        var preflightDirectory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                801,
+                "Device 1",
+                "TAG-001",
+                "SN-001",
+                "00:11:22:33:44:55",
+                notes: "Imported from Atera.\nFirst added by Atera-SnipeIT Sync Tool at 2026-05-01T10:20:30Z\nAuto Synced from Atera at 2026-05-02T10:20:30Z"));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(macAddresses: ["00-11-22-33-44-55"])),
+            CreateOptions(dryRun: true, preflightDirectory: preflightDirectory),
+            CancellationToken.None);
+
+        Assert.Equal(0, result.UpdatedAssets);
+        Assert.Equal(1, result.SkippedAssets);
+        var action = Assert.Single(result.Actions, item => item.ActionType == "Skip");
+        Assert.False(action.WasExecuted);
+        var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
+        var lines = assetCsv.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Single(lines);
+        Assert.Contains("ChangeReasons", lines[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("Modify,", assetCsv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportAsync_SkipsHardwarePatch_WhenExistingAssetIsUnchanged()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                801,
+                "Device 1",
+                "TAG-001",
+                "SN-001",
+                "00:11:22:33:44:55",
+                notes: "Imported from Atera.\nAuto Synced from Atera at 2026-05-02T10:20:30Z"));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(macAddresses: ["00-11-22-33-44-55"])),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(0, result.UpdatedAssets);
+        Assert.Equal(1, result.SkippedAssets);
+        var action = Assert.Single(result.Actions, item => item.ActionType == "Skip");
+        Assert.True(action.WasExecuted);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
+    }
+
+    [Fact]
+    public async Task ImportAsync_PreviewListsOnlyRealAssetChanges_WithStableReasons()
+    {
+        var preflightDirectory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                801,
+                "Old Device Name",
+                "TAG-001",
+                string.Empty,
+                "66:55:44:33:22:11",
+                notes: "Old business note.",
+                companyId: 11,
+                modelId: 41,
+                statusId: 3));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(macAddresses: ["00-11-22-33-44-55"])),
+            CreateOptions(dryRun: true, preflightDirectory: preflightDirectory),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.UpdatedAssets);
+        Assert.Equal(0, result.SkippedAssets);
+        var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
+        Assert.Contains("Modify,TAG-001,Device 1", assetCsv, StringComparison.Ordinal);
+        Assert.Contains("Status; Model; Company; Name; Serial; MacAddress; Notes", assetCsv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportAsync_PreviewFailsSafeToModify_WhenSnapshotIdsAreMissing()
+    {
+        var preflightDirectory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                801,
+                "Device 1",
+                "TAG-001",
+                "SN-001",
+                notes: "Imported from Atera.\nAuto Synced from Atera at 2026-05-02T10:20:30Z",
+                companyId: null,
+                modelId: null,
+                statusId: null));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(dryRun: true, preflightDirectory: preflightDirectory),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.UpdatedAssets);
+        var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
+        Assert.Contains("Status; Model; Company", assetCsv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportAsync_DoesNotTreatUnmanagedSerialOrIgnoredMacAsAChange()
+    {
+        const string ignoredMac = "00:11:22:33:44:55";
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                801,
+                "Device 1",
+                "TAG-001",
+                "TARGET-ONLY-SERIAL",
+                ignoredMac,
+                notes: "Imported from Atera.\nAuto Synced from Atera at 2026-05-02T10:20:30Z"));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(
+                serial: "AUDIT-ONLY-SERIAL",
+                macAddresses: [ignoredMac],
+                serialIsReliableIdentity: false)),
+            CreateOptions(ignoredMacAddresses: [ignoredMac]),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.SkippedAssets);
         Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Post || request.Method.Method == "PATCH");
     }
 
@@ -1164,7 +1379,7 @@ public sealed class SnipeImporterTests
 
         var failure = Assert.Single(result.Failures);
         Assert.Equal("SnipeImport.AuthenticationFailed", failure.Code);
-        Assert.Contains("Load company snapshot via GET /companies failed", failure.Message);
+        Assert.Contains("Load company snapshot page 1 via GET /companies?limit=500&offset=0 failed", failure.Message);
         Assert.Contains("HTTP 401", failure.Message);
         Assert.Contains("Unauthenticated", failure.Message);
     }
@@ -1610,7 +1825,7 @@ public sealed class SnipeImporterTests
             handler.Requests,
             request => request.Method == HttpMethod.Get
                 && request.PathAndQuery.StartsWith("/api/v1/companies", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal("/api/v1/companies", companyRequest.PathAndQuery);
+        Assert.Equal("/api/v1/companies?limit=500&offset=0", companyRequest.PathAndQuery);
     }
 
     [Fact]
@@ -1870,7 +2085,7 @@ public sealed class SnipeImporterTests
         Assert.All(result.Failures, failure => Assert.Equal("SnipeImport.DuplicateBatchIdentity", failure.Code));
         var assetCsv = await File.ReadAllTextAsync(Path.Combine(preflightDirectory, "snipeit-assets-plan.csv"));
         Assert.Contains(
-            "Operation,AssetTag,Name,Serial,MacAddresses,CompanyName,ModelName,CategoryName,ManufacturerName,ExistingAssetId,ExistingAssetTag,ConflictingFields,ConflictingValue,ConflictingAssets,FailureCode,FailureMessage,DeviceType",
+            "Operation,AssetTag,Name,Serial,MacAddresses,CompanyName,ModelName,CategoryName,ManufacturerName,ExistingAssetId,ExistingAssetTag,ConflictingFields,ConflictingValue,ConflictingAssets,FailureCode,FailureMessage,ChangeReasons,DeviceType",
             assetCsv,
             StringComparison.Ordinal);
         Assert.Contains("00:11:22:33:44:55; AA:BB:CC:DD:EE:FF", assetCsv, StringComparison.Ordinal);
@@ -1935,7 +2150,78 @@ public sealed class SnipeImporterTests
             handler.Requests,
             request => request.Method == HttpMethod.Get
                 && request.PathAndQuery.StartsWith("/api/v1/companies", StringComparison.OrdinalIgnoreCase));
-        Assert.Equal("/api/v1/companies", companyRequest.PathAndQuery);
+        Assert.Equal("/api/v1/companies?limit=500&offset=0", companyRequest.PathAndQuery);
+    }
+
+    [Fact]
+    public async Task ImportAsync_LoadsAllCompanyPages_BeforePlanningWrites()
+    {
+        var handler = new StubHttpMessageHandler();
+        var firstPage = Enumerable.Range(1, 500)
+            .Select(id => Entity(id, $"Company {id}"))
+            .ToArray();
+        handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(501, firstPage));
+        handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(501, Entity(501, "Contoso")));
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(20, "Laptop")));
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Entity(30, "Dell")));
+        handler.QueueResponse(HttpStatusCode.OK, Rows(Model(40, "Latitude", 20)));
+        QueueHardwareSnapshot(handler);
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(companyName: "Contoso")),
+            CreateOptions(dryRun: true),
+            CancellationToken.None);
+
+        Assert.Empty(result.Failures);
+        Assert.Equal(1, result.CreatedAssets);
+        Assert.Equal(
+            [
+                "/api/v1/companies?limit=500&offset=0",
+                "/api/v1/companies?limit=500&offset=500"
+            ],
+            handler.Requests
+                .Where(request => request.PathAndQuery.StartsWith("/api/v1/companies", StringComparison.OrdinalIgnoreCase))
+                .Select(request => request.PathAndQuery));
+    }
+
+    [Fact]
+    public async Task ImportAsync_BlocksWrites_WhenCompanyTotalChangesBetweenPages()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(2, Entity(10, "Acme")));
+        handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(3, Entity(11, "Contoso")));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(dryRun: true),
+            CancellationToken.None);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("SnipeImport.IncompleteCompanySnapshot", failure.Code);
+        Assert.Contains("changed from 2 during pagination", failure.Message);
+        Assert.DoesNotContain(handler.Requests, request => request.Method != HttpMethod.Get);
+    }
+
+    [Fact]
+    public async Task ImportAsync_BlocksWrites_WhenCompanySnapshotExceedsSafetyPageLimit()
+    {
+        var handler = new StubHttpMessageHandler
+        {
+            ResponseFactory = _ => (HttpStatusCode.OK, RowsWithTotal(10001, Entity(10, "Acme")))
+        };
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord()),
+            CreateOptions(dryRun: true),
+            CancellationToken.None);
+
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("SnipeImport.IncompleteCompanySnapshot", failure.Code);
+        Assert.Contains("maximum safe page count", failure.Message);
+        Assert.Equal(10000, handler.Requests.Count);
     }
 
     [Fact]
@@ -1974,6 +2260,7 @@ public sealed class SnipeImporterTests
     {
         var handler = new StubHttpMessageHandler();
         handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(2, Entity(10, "Acme")));
+        handler.QueueResponse(HttpStatusCode.OK, RowsWithTotal(2));
         var importer = CreateImporter(handler);
 
         var result = await importer.ImportAsync(
@@ -1983,8 +2270,8 @@ public sealed class SnipeImporterTests
 
         var failure = Assert.Single(result.Failures);
         Assert.Equal("SnipeImport.IncompleteCompanySnapshot", failure.Code);
-        Assert.Contains("returned 1 company row(s) but reported total 2", failure.Message);
-        Assert.Single(handler.Requests);
+        Assert.Contains("returned no rows before the reported total 2 was loaded", failure.Message);
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Fact]
@@ -2155,6 +2442,187 @@ public sealed class SnipeImporterTests
 
         await Assert.ThrowsAsync<ArgumentException>(
             () => importer.ImportAsync(CreateBatch(CreateRecord()), options, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ImportAsync_DeletesOnlyStaleAteraManagedAsset_AndAuditsIdentity()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                500,
+                "Current Device",
+                " aTeRa-1001 ",
+                "SN-001",
+                notes: "Imported from Atera.\nAuto Synced from Atera at 2026-07-22T10:00:00Z"),
+            Asset(501, "Retired Device", " ATERA-9999 ", "SN-999", notes: "SECRET-NOTES-MUST-NOT-LOG"),
+            Asset(502, "Manual Device", "MANUAL-502", "SN-502"));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(500));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(501));
+        var logger = new CapturingLogger<SnipeImporter>();
+        var importer = new SnipeImporter(new HttpClient(handler), logger);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(
+                assetTag: "ATERA-1001",
+                name: "Current Device",
+                sourceId: "1001")),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.DeletedAssets);
+        Assert.Empty(result.Failures);
+        var deleteRequest = Assert.Single(handler.Requests, request => request.Method == HttpMethod.Delete);
+        Assert.Equal("/api/v1/hardware/501", deleteRequest.PathAndQuery);
+        Assert.Empty(deleteRequest.Content);
+        Assert.DoesNotContain(handler.Requests, request => request.PathAndQuery == "/api/v1/hardware/502");
+        var action = Assert.Single(result.Actions, action => action.ActionType == "Delete");
+        Assert.True(action.WasExecuted);
+        Assert.Equal("501", action.Identifier);
+        Assert.Contains("AssetTag=ATERA-9999", action.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Name=Retired Device", action.Message, StringComparison.Ordinal);
+        Assert.Contains("AteraAgentId=9999", action.Message, StringComparison.Ordinal);
+        Assert.Contains("Reason=MissingFromAtera", action.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Information
+            && entry.Message.Contains("501", StringComparison.Ordinal)
+            && entry.Message.Contains("ATERA-9999", StringComparison.OrdinalIgnoreCase)
+            && entry.Message.Contains("Retired Device", StringComparison.Ordinal)
+            && entry.Message.Contains("Atera agent 9999", StringComparison.Ordinal)
+            && entry.Message.Contains("MissingFromAtera", StringComparison.Ordinal)
+            && entry.Message.Contains("Succeeded", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Entries, entry =>
+            entry.Message.Contains("secret-token", StringComparison.Ordinal)
+            || entry.Message.Contains("SECRET-NOTES-MUST-NOT-LOG", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ImportAsync_DryRunPlansDeleteAndWritesCsv_WithoutDeleteRequest()
+    {
+        var directory = CreateTempDirectoryPath();
+        var handler = new StubHttpMessageHandler();
+        QueueDependencyLookups(handler);
+        QueueHardwareSnapshot(
+            handler,
+            Asset(
+                500,
+                "Current Device",
+                "ATERA-1001",
+                "SN-001",
+                notes: "Imported from Atera.\nAuto Synced from Atera at 2026-07-22T10:00:00Z"),
+            Asset(501, "Retired Device", "ATERA-9999", "SN-999"));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(CreateRecord(
+                assetTag: "ATERA-1001",
+                name: "Current Device",
+                sourceId: "1001")),
+            CreateOptions(dryRun: true, preflightDirectory: directory),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.DeletedAssets);
+        var action = Assert.Single(result.Actions, action => action.ActionType == "Delete");
+        Assert.False(action.WasExecuted);
+        Assert.DoesNotContain(handler.Requests, request => request.Method == HttpMethod.Delete);
+        var csv = await File.ReadAllTextAsync(Path.Combine(directory, "snipeit-assets-plan.csv"));
+        Assert.Contains("Delete,ATERA-9999,Retired Device", csv, StringComparison.Ordinal);
+        Assert.Contains(",501,ATERA-9999,", csv, StringComparison.Ordinal);
+        Assert.Contains("MissingFromAtera", csv, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ImportAsync_EmptyAteraBatchDeletesAllManagedAssets_ButPreservesManualAssets()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueHardwareSnapshot(
+            handler,
+            Asset(601, "Retired One", "ATERA-1", "SN-1"),
+            Asset(602, "Retired Two", "atera-2", "SN-2"),
+            Asset(603, "Manual", "MANUAL-603", "SN-3"));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(601));
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(602));
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(2, result.DeletedAssets);
+        Assert.Equal(
+            ["/api/v1/hardware/601", "/api/v1/hardware/602"],
+            handler.Requests
+                .Where(request => request.Method == HttpMethod.Delete)
+                .Select(request => request.PathAndQuery)
+                .ToArray());
+        Assert.DoesNotContain(handler.Requests, request => request.PathAndQuery == "/api/v1/hardware/603");
+    }
+
+    [Fact]
+    public async Task ImportAsync_DeleteFailureIsAudited_AndDoesNotBlockNextCandidate()
+    {
+        var handler = new StubHttpMessageHandler();
+        QueueHardwareSnapshot(
+            handler,
+            Asset(701, "Retired Failure", "ATERA-701", "SN-701", notes: "PRIVATE-NOTES"),
+            Asset(702, "Retired Success", "ATERA-702", "SN-702"));
+        handler.QueueResponse(
+            HttpStatusCode.OK,
+            """{ "status": "error", "messages": "Delete rejected." }""");
+        handler.QueueResponse(HttpStatusCode.OK, SuccessPayload(702));
+        var logger = new CapturingLogger<SnipeImporter>();
+        var importer = new SnipeImporter(new HttpClient(handler), logger);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(1, result.DeletedAssets);
+        Assert.Equal(1, result.FailedAssets);
+        Assert.Equal(2, handler.Requests.Count(request => request.Method == HttpMethod.Delete));
+        var failure = Assert.Single(result.Failures);
+        Assert.Equal("SnipeImport.BusinessError", failure.Code);
+        Assert.Contains("AssetId=701", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("AssetTag=ATERA-701", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Name=Retired Failure", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("AteraAgentId=701", failure.Message, StringComparison.Ordinal);
+        Assert.Contains("Reason=MissingFromAtera", failure.Message, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Warning
+            && entry.Message.Contains("ATERA-701", StringComparison.Ordinal)
+            && entry.Message.Contains("SnipeImport.BusinessError", StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, entry =>
+            entry.Level == LogLevel.Information
+            && entry.Message.Contains("ATERA-702", StringComparison.Ordinal)
+            && entry.Message.Contains("Succeeded", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Entries, entry =>
+            entry.Message.Contains("secret-token", StringComparison.Ordinal)
+            || entry.Message.Contains("PRIVATE-NOTES", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ImportAsync_MalformedHardwareSnapshotWithEmptyBatch_PerformsNoMutation()
+    {
+        var handler = new StubHttpMessageHandler();
+        handler.QueueResponse(HttpStatusCode.OK, "{}");
+        var importer = CreateImporter(handler);
+
+        var result = await importer.ImportAsync(
+            CreateBatch(),
+            CreateOptions(),
+            CancellationToken.None);
+
+        Assert.Equal(0, result.DeletedAssets);
+        Assert.Equal(1, result.FailedAssets);
+        Assert.Contains(result.Failures, failure => failure.Code == "SnipeImport.MalformedResponse");
+        Assert.DoesNotContain(handler.Requests, request =>
+            request.Method == HttpMethod.Post
+            || request.Method == HttpMethod.Patch
+            || request.Method == HttpMethod.Delete);
     }
 
     private static void QueueDependencyLookups(StubHttpMessageHandler handler)
@@ -2385,7 +2853,10 @@ public sealed class SnipeImporterTests
         string companyName = "Acme",
         string categoryName = "Laptop",
         string modelName = "Latitude",
-        string? notes = null)
+        string? notes = null,
+        int? companyId = 10,
+        int? modelId = 40,
+        int? statusId = 2)
     {
         var customFields = macAddress is null
             ? string.Empty
@@ -2393,7 +2864,10 @@ public sealed class SnipeImporterTests
         var notesProperty = notes is null
             ? string.Empty
             : $""", "notes": {JsonSerializer.Serialize(notes)}""";
-        return $$"""{ "id": {{id}}, "name": "{{name}}", "asset_tag": "{{assetTag}}", "serial": "{{serial}}", "company": { "id": 10, "name": "{{companyName}}" }, "category": { "id": 20, "name": "{{categoryName}}" }, "model": { "id": 40, "name": "{{modelName}}" }{{notesProperty}}{{customFields}} }""";
+        var companyIdProperty = companyId is null ? string.Empty : $"\"id\": {companyId.Value}, ";
+        var modelIdProperty = modelId is null ? string.Empty : $"\"id\": {modelId.Value}, ";
+        var statusIdProperty = statusId is null ? string.Empty : $"\"id\": {statusId.Value}, ";
+        return $$"""{ "id": {{id}}, "name": "{{name}}", "asset_tag": "{{assetTag}}", "serial": "{{serial}}", "company": { {{companyIdProperty}}"name": "{{companyName}}" }, "category": { "id": 20, "name": "{{categoryName}}" }, "model": { {{modelIdProperty}}"name": "{{modelName}}" }, "status_label": { {{statusIdProperty}}"name": "Ready to Deploy" }{{notesProperty}}{{customFields}} }""";
     }
 
     private static string SuccessPayload(int id)
@@ -2412,6 +2886,7 @@ public sealed class SnipeImporterTests
 
         public List<CapturedRequest> Requests { get; } = [];
         public Action<CapturedRequest>? OnRequest { get; set; }
+        public Func<CapturedRequest, (HttpStatusCode StatusCode, string Content)>? ResponseFactory { get; set; }
 
         public void QueueResponse(HttpStatusCode statusCode, string content)
         {
@@ -2436,6 +2911,15 @@ public sealed class SnipeImporterTests
 
             if (_responses.Count == 0)
             {
+                if (ResponseFactory is not null)
+                {
+                    var response = ResponseFactory(Requests[^1]);
+                    return new HttpResponseMessage(response.StatusCode)
+                    {
+                        Content = new StringContent(response.Content, Encoding.UTF8, "application/json")
+                    };
+                }
+
                 throw new InvalidOperationException("No queued HTTP response is available.");
             }
 
@@ -2461,6 +2945,47 @@ public sealed class SnipeImporterTests
         public void Report(SyncProgressUpdate value)
         {
             updates.Add(value);
+        }
+    }
+
+    /// <summary>
+    /// Captures rendered importer log entries so tests can verify successful mutations without configuring a real log provider.
+    /// </summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return NoopScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+
+    /// <summary>
+    /// Provides the disposable no-op scope required by the test logger contract.
+    /// </summary>
+    private sealed class NoopScope : IDisposable
+    {
+        public static NoopScope Instance { get; } = new();
+
+        public void Dispose()
+        {
         }
     }
 }

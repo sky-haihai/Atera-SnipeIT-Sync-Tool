@@ -1,5 +1,9 @@
 # Notification - 单元测试指导手册
 
+## 2026-07 Result projection regression
+
+`CreateForSyncResult_IncludesSummaryCountsAndFirstFailure` verifies the required `DryRun` line, while `CreateForSyncResult_DoesNotCountPipelineFailureAsFailedAsset` verifies Mapping failure details remain visible with `FailedAssets: 0`. These tests construct local results and send no SMTP or webhook traffic.
+
 ## 1. 当前状态
 
 Module 6 Notification 已完成第一版 stub-safe 实现和自动化测试。
@@ -71,10 +75,11 @@ Notification 测试完全离线：
 4. `CreateForSyncResult_ReturnsManualPreviewCompleted_WhenManualPreviewSucceeds`
 5. `CreateForSyncResult_ReturnsGenericEvent_WhenTriggeredByUnknown`
 6. `CreateForSyncResult_UsesWarningSeverity_WhenSuccessfulRunHasWarnings`
-7. `CreateForSyncResult_UsesCriticalSeverity_ForAuthenticationFailureCode`
-8. `CreateForSyncResult_IncludesSummaryCountsAndFirstFailure`
-9. `CreateForSyncResult_DoesNotIncludeSecretsOrRawPayloads`
-10. `CreateForSyncResult_ThrowsArgumentNullException_WhenResultNull`
+7. `CreateForSyncResult_ReturnsCompletedWarning_WhenCompletedRunHasRecordFailures`
+8. `CreateForSyncResult_UsesCriticalSeverity_ForAuthenticationFailureCode`
+9. `CreateForSyncResult_IncludesSummaryCountsAndFirstFailure`
+10. `CreateForSyncResult_DoesNotIncludeSecretsOrRawPayloads`
+11. `CreateForSyncResult_ThrowsArgumentNullException_WhenResultNull`
 11. `CreateForSyncResult_ThrowsArgumentException_WhenTriggeredByBlank`
 
 `NotificationEventFilterTests` 覆盖：
@@ -143,3 +148,66 @@ Notification 自动化测试必须保持本地、离线、可重复。
 - confirmation that secrets must not be printed, logged, committed, or stored in tracked files
 - expected sanitized output
 - cleanup steps for removing environment variables or temporary files
+## 8. 2026-07 Concrete Email/Webhook tests
+
+当前生产实现不再是 null-only。`NotificationDeliveryTests` 使用 fake SMTP transport 与 fake HTTP handler 覆盖：
+
+- SMTP host/port/TLS/username/password/from/multiple recipients/subject/body 被组成一次 envelope 并只发送一次。
+- username/password 不完整、invalid address/port 在网络调用前失败。
+- Webhook 只接受 absolute HTTPS，以 POST + `application/json` 发送 Teams Adaptive Card envelope 或显式选择的安全五字段 generic payload。
+- Webhook non-2xx 只返回 status code，不读取或泄露 response body/endpoint。
+- composite publisher 在一个 channel 失败时仍尝试另一个 channel，并只抛出 sanitized channel summary。
+- TestAsync 独立返回 Email/Webhook 的 configured/success/failure；未配置 channel 不调用 sender。
+- zero configured channel fail-closed；cancellation 不包装。
+- `LocalAppSettingsStoreTests` round-trip 全部 SMTP/email/webhook 字段，包括本机明文 SMTP password，但测试只使用假值。
+
+验证命令：
+
+```powershell
+dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-build --no-restore --filter "FullyQualifiedName~Notifications|FullyQualifiedName~WorkerCommandHandlerTests|FullyQualifiedName~WorkerIpcClientTests|FullyQualifiedName~LocalAppSettingsStoreTests"
+dotnet test AteraSnipeSync.sln --no-build --no-restore
+```
+
+人工真实发送：在 Notifications 页填写 SMTP 与/或 HTTPS Webhook，点击 Test Notifications；确认每个已配置 channel 恰好收到一条带测试 subject/event 的消息。SMTP password、recipient 和 webhook URL 不得打印、截图到公共 issue、提交或放入测试 fixture。测试完成后按需从本机未跟踪 JSON 清除 SMTP password。
+
+服务器验收必须从 Worker Service 所在服务器执行：确认 LocalSystem 服务进程能解析 endpoint DNS，并允许出站 SMTP port/HTTPS 443。IP relay 场景留空 username/password；authenticated SMTP 必须显式填写二者。不要用桌面用户网络连通性替代服务端连通性结论。
+
+## 9. 2026-07 Teams Workflow Adaptive Card regression tests
+
+`NotificationDeliveryTests` 现在分别覆盖两种 webhook wire shape：
+
+- `TeamsAdaptiveCard` 验证外层 `type = message`、单个 adaptive-card attachment、`contentType`、`content.type = AdaptiveCard`、schema、version、三个 body elements，以及 severity/event/UTC facts。该断言直接防止 Teams Flow 再次出现 `Property 'type' must be 'AdaptiveCard'`。
+- `GenericJson` 显式选择后验证六字段安全 payload，包括 numeric `deleted`，且不包含 SMTP password 或 endpoint host。
+- `CompositeNotificationPublisher` 的同步成功 message 必须包含 endpoint `accepted` 与 downstream delivery `not confirmed`，避免把 HTTP 2xx/SMTP acceptance 误报成最终投递。
+- `LocalAppSettingsStoreTests` 验证 payload format string round-trip、旧配置缺字段时默认 Teams、未知字段值 fail closed。
+
+Focused command：
+
+```powershell
+dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-build --no-restore --filter "FullyQualifiedName~NotificationDeliveryTests|FullyQualifiedName~LocalAppSettingsStoreTests" --logger "console;verbosity=minimal"
+```
+
+人工 Teams 验收：在服务器部署新 Worker/Tray build，Notifications 页选择 `Teams Workflow (Adaptive Card)`，填写私密 HTTPS Flow URL 并点击 Test Notifications。UI 应显示 `Webhook: Accepted`；随后确认 Teams channel 出现卡片，并在 Power Automate run history 中确认 `Post card in a chat or channel` 成功。HTTP Accepted 但 Flow 后续 action 失败仍需以 run history 为准，URL 不得复制到日志、issue 或测试 fixture。
+
+## 10. 2026-07 Completed-with-record-failures 回归
+
+- `CreateForSyncResult_ReturnsCompletedWarning_WhenCompletedRunHasRecordFailures` 构造 `Success = true`、`FailedAssets = 1` 和一条 safe failure，断言 scheduled event 仍为 `ScheduledSyncCompleted`、severity 为 `Warning`、message 使用 `Result: Completed` 并保留失败摘要。
+- fatal/incomplete result 的既有测试继续断言 `*SyncFailed` 和 `Result: Failed`。
+- `WorkerCommandHandlerTests.ExecuteAsync_SyncNow_PublishesCompletedNotification_WhenCompletedRunHasRecordFailures` 验证 manual Worker 路径使用同一口径，不调用真实 API、SMTP 或 webhook。
+
+## 11. 2026-07 Deleted notification regression
+
+- `NotificationRequestFactoryTests.CreateForSyncResult_IncludesSummaryCountsAndFirstFailure` 构造 `DeletedAssets = 3`，断言结构化 `NotificationRequest.Deleted == 3`，并断言 Email/Teams 共用的安全 message 含 `DeletedAssets: 3`。
+- `NotificationDeliveryTests.WebhookSender_PostsGenericSafeJson_WithoutConfigurationSecrets` 使用 fake HTTP handler，断言顶层 `deleted` 存在、JSON kind 为 Number、值为 3，同时保留 method/content-type 与 secret non-leakage 断言。
+- 所有直接构造的 `NotificationRequest` fixture 显式初始化 `Deleted`；Test Notifications 固定为 0，普通 sync 通知由 factory 投影 `SnipeImportResult.DeletedAssets`。
+- Teams Adaptive Card 不添加非契约 root field；其 message TextBlock 显示同一 `DeletedAssets` 摘要。
+
+Focused command：
+
+```powershell
+dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~Notification" --logger "console;verbosity=minimal"
+```
+
+测试必须继续使用 fake SMTP transport 与 fake HTTP handler，不得访问真实 webhook、SMTP、Atera 或 Snipe-IT endpoint。
+
+本轮最新验证结果：Notification filter 43 passed；solution build 0 warnings/0 errors；第一次 full run 因既有 named-pipe timing case 瞬时失败 1 项，单独复跑通过，随后 full solution 315 passed / 0 failed / 0 skipped。

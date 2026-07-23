@@ -64,22 +64,22 @@ public sealed class LocalAppSettingsStoreTests
     }
 
     [Fact]
-    public async Task LoadManualSyncSettingsAsync_ReturnsNull_WhenFileDoesNotExist()
+    public async Task LoadSyncAppSettingsAsync_ReturnsNull_WhenFileDoesNotExist()
     {
         var store = new LocalAppSettingsStore(CreateTempFilePath());
 
-        var result = await store.LoadManualSyncSettingsAsync(CancellationToken.None);
+        var result = await store.LoadSyncAppSettingsAsync(CancellationToken.None);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_SavesManualPanelConfig()
+    public async Task SaveSyncAppSettingsAsync_SavesCompleteConfig()
     {
         var filePath = CreateTempFilePath();
         var store = new LocalAppSettingsStore(filePath);
 
-        await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
+        await store.SaveSyncAppSettingsAsync(CreateSyncAppSettings(), CancellationToken.None);
 
         var root = JsonNode.Parse(await File.ReadAllTextAsync(filePath))!.AsObject();
         Assert.Equal("https://app.atera.com/api/v3", root["Atera"]!["BaseUrl"]!.GetValue<string>());
@@ -100,9 +100,9 @@ public sealed class LocalAppSettingsStoreTests
         Assert.Equal(0.92D, root["SnipeIt"]!["NameMatchThreshold"]!.GetValue<double>());
         Assert.True(root["SnipeIt"]!["CreateMissingCompanies"]!.GetValue<bool>());
         Assert.False(root["SnipeIt"]!["CreateMissingModels"]!.GetValue<bool>());
-        Assert.Equal("Default Company", root["Mapping"]!["DefaultCompanyName"]!.GetValue<string>());
-        Assert.Equal("Default Manufacturer", root["Mapping"]!["DefaultManufacturerName"]!.GetValue<string>());
-        Assert.Equal("Default Model", root["Mapping"]!["DefaultModelName"]!.GetValue<string>());
+        Assert.Null(root["Mapping"]!["DefaultCompanyName"]);
+        Assert.Null(root["Mapping"]!["DefaultManufacturerName"]);
+        Assert.Null(root["Mapping"]!["DefaultModelName"]);
         Assert.Equal("Computer", root["Mapping"]!["DefaultCategoryName"]!.GetValue<string>());
         Assert.Null(root["Mapping"]!["DefaultComputerCategoryName"]);
         Assert.Null(root["Mapping"]!["DefaultServerCategoryName"]);
@@ -112,26 +112,39 @@ public sealed class LocalAppSettingsStoreTests
         Assert.Equal(
             "Dell",
             root["Mapping"]!["ManufacturerAliases"]!["Dell Inc."]!.GetValue<string>());
+        Assert.Null(root["Sync"]!["DryRun"]);
+        Assert.Equal("Weekly", root["Sync"]!["Schedule"]!["Frequency"]!.GetValue<string>());
+        var notifications = root["Notifications"]!;
+        Assert.True(notifications["Enabled"]!.GetValue<bool>());
+        Assert.Equal("smtp.example.test", notifications["SmtpHost"]!.GetValue<string>());
+        Assert.Equal(587, notifications["SmtpPort"]!.GetValue<int>());
+        Assert.True(notifications["SmtpUseSsl"]!.GetValue<bool>());
+        Assert.Equal("mailer", notifications["SmtpUsername"]!.GetValue<string>());
+        Assert.Equal("smtp-secret", notifications["SmtpPassword"]!.GetValue<string>());
+        Assert.Equal("sync@example.test", notifications["EmailFrom"]!.GetValue<string>());
+        Assert.Equal("operator@example.test", notifications["EmailTo"]!.GetValue<string>());
+        Assert.Equal("GenericJson", notifications["WebhookPayloadFormat"]!.GetValue<string>());
+        Assert.Equal("https://hooks.example.test/notify", notifications["WebhookUrl"]!.GetValue<string>());
     }
 
     [Fact]
-    public async Task LoadManualSyncSettingsAsync_ReturnsSavedManualPanelConfig()
+    public async Task LoadSyncAppSettingsAsync_ReturnsSavedCompleteConfig()
     {
         var filePath = CreateTempFilePath();
         var store = new LocalAppSettingsStore(filePath);
-        await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
+        await store.SaveSyncAppSettingsAsync(CreateSyncAppSettings(), CancellationToken.None);
 
         var reloadedStore = new LocalAppSettingsStore(filePath);
-        var result = await reloadedStore.LoadManualSyncSettingsAsync(CancellationToken.None);
+        var result = await reloadedStore.LoadSyncAppSettingsAsync(CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("https://app.atera.com/api/v3", result.AteraBaseUrl);
         Assert.Equal("atera-key", result.AteraApiKey);
         Assert.Equal("https://snipe.example.com/api/v1", result.SnipeItBaseUrl);
         Assert.Equal("snipe-token", result.SnipeItApiToken);
-        Assert.Equal("Default Company", result.DefaultCompanyName);
-        Assert.Equal("Default Manufacturer", result.DefaultManufacturerName);
-        Assert.Equal("Default Model", result.DefaultModelName);
+        Assert.Equal(SyncApplicationDefaults.CompanyName, result.DefaultCompanyName);
+        Assert.Equal(SyncApplicationDefaults.ManufacturerName, result.DefaultManufacturerName);
+        Assert.Equal(SyncApplicationDefaults.ModelName, result.DefaultModelName);
         Assert.Equal("Computer", result.DefaultCategoryName);
         Assert.Equal(["Server", "Laptop", "Desktop"], result.ModelCategoriesToNormalize);
         Assert.Equal(2, result.DefaultStatusId);
@@ -145,10 +158,87 @@ public sealed class LocalAppSettingsStoreTests
             "Moore Equine Veterinary Centre",
             result.CompanyAliases["Moore Equine Veterinary Centre - AR"]);
         Assert.Equal("Dell", result.ManufacturerAliases["Dell Inc."]);
+        Assert.True(result.Notifications.Enabled);
+        Assert.Equal("smtp.example.test", result.Notifications.SmtpHost);
+        Assert.Equal(587, result.Notifications.SmtpPort);
+        Assert.True(result.Notifications.SmtpUseSsl);
+        Assert.Equal("mailer", result.Notifications.SmtpUsername);
+        Assert.Equal("smtp-secret", result.Notifications.SmtpPassword);
+        Assert.Equal("sync@example.test", result.Notifications.EmailFrom);
+        Assert.Equal("operator@example.test", result.Notifications.EmailTo);
+        Assert.Equal(WebhookPayloadFormat.GenericJson, result.Notifications.WebhookPayloadFormat);
+        Assert.Equal("https://hooks.example.test/notify", result.Notifications.WebhookUrl);
     }
 
     [Fact]
-    public async Task LoadManualSyncSettingsAsync_UsesComputerFieldAsFallbackForSplitCategoryConfig()
+    public async Task LoadNotificationConfigAsync_DefaultsLegacyWebhookFormatToTeamsAdaptiveCard()
+    {
+        var filePath = CreateTempFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        await File.WriteAllTextAsync(
+            filePath,
+            """
+            {
+              "Notifications": {
+                "WebhookUrl": "https://example.logic.azure.com/workflows/test"
+              }
+            }
+            """);
+
+        var result = await new LocalAppSettingsStore(filePath)
+            .LoadNotificationConfigAsync(CancellationToken.None);
+
+        Assert.Equal(WebhookPayloadFormat.TeamsAdaptiveCard, result.WebhookPayloadFormat);
+    }
+
+    [Fact]
+    public async Task LoadSyncAppSettingsAsync_IgnoresLegacyCustomUnknownFallbacks()
+    {
+        var filePath = CreateTempFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        await File.WriteAllTextAsync(
+            filePath,
+            """
+            {
+              "Mapping": {
+                "DefaultCompanyName": "Legacy Company",
+                "DefaultManufacturerName": "Legacy Manufacturer",
+                "DefaultModelName": "Legacy Model",
+                "DefaultCategoryName": "Computer"
+              }
+            }
+            """);
+        var store = new LocalAppSettingsStore(filePath);
+
+        var result = await store.LoadSyncAppSettingsAsync(CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(SyncApplicationDefaults.CompanyName, result.DefaultCompanyName);
+        Assert.Equal(SyncApplicationDefaults.ManufacturerName, result.DefaultManufacturerName);
+        Assert.Equal(SyncApplicationDefaults.ModelName, result.DefaultModelName);
+    }
+
+    [Fact]
+    public async Task LoadNotificationConfigAsync_RejectsUnknownWebhookFormat()
+    {
+        var filePath = CreateTempFilePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        await File.WriteAllTextAsync(
+            filePath,
+            """
+            {
+              "Notifications": {
+                "WebhookPayloadFormat": "UnknownFormat"
+              }
+            }
+            """);
+
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => new LocalAppSettingsStore(filePath).LoadNotificationConfigAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task LoadSyncAppSettingsAsync_UsesComputerFieldAsFallbackForSplitCategoryConfig()
     {
         var filePath = CreateTempFilePath();
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
@@ -164,19 +254,19 @@ public sealed class LocalAppSettingsStoreTests
             """);
         var store = new LocalAppSettingsStore(filePath);
 
-        var result = await store.LoadManualSyncSettingsAsync(CancellationToken.None);
+        var result = await store.LoadSyncAppSettingsAsync(CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal("Legacy Computer", result.DefaultCategoryName);
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_SavesIgnoredMacAddresses()
+    public async Task SaveSyncAppSettingsAsync_SavesIgnoredMacAddresses()
     {
         var filePath = CreateTempFilePath();
         var store = new LocalAppSettingsStore(filePath);
 
-        await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
+        await store.SaveSyncAppSettingsAsync(CreateSyncAppSettings(), CancellationToken.None);
 
         var root = JsonNode.Parse(await File.ReadAllTextAsync(filePath))!.AsObject();
         Assert.Equal(
@@ -185,7 +275,7 @@ public sealed class LocalAppSettingsStoreTests
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_PreservesExistingSections()
+    public async Task SaveSyncAppSettingsAsync_PreservesUneditedProperties()
     {
         var filePath = CreateTempFilePath();
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
@@ -194,27 +284,31 @@ public sealed class LocalAppSettingsStoreTests
             """
             {
               "Notifications": {
-                "Enabled": true
+                "Enabled": true,
+                "Custom": "keep"
               },
               "Sync": {
+                "DryRun": true,
                 "IntervalMinutes": 30
               }
             }
             """);
         var store = new LocalAppSettingsStore(filePath);
 
-        await store.SaveManualSyncSettingsAsync(CreateManualSyncSettings(), CancellationToken.None);
+        await store.SaveSyncAppSettingsAsync(CreateSyncAppSettings(), CancellationToken.None);
 
         var root = JsonNode.Parse(await File.ReadAllTextAsync(filePath))!.AsObject();
         Assert.True(root["Notifications"]!["Enabled"]!.GetValue<bool>());
+        Assert.Equal("keep", root["Notifications"]!["Custom"]!.GetValue<string>());
         Assert.Equal(30, root["Sync"]!["IntervalMinutes"]!.GetValue<int>());
+        Assert.Null(root["Sync"]!["DryRun"]);
         Assert.Equal("atera-key", root["Atera"]!["ApiKey"]!.GetValue<string>());
         Assert.Equal("snipe-token", root["SnipeIt"]!["ApiToken"]!.GetValue<string>());
 
     }
 
     [Fact]
-    public async Task LoadWorkerSyncSettingsAsync_RejectsLegacyPlaintextSecrets_WithoutChangingFile()
+    public async Task LoadWorkerSyncSettingsAsync_LoadsPlaintextJsonCredentials_WithoutChangingFile()
     {
         var filePath = CreateTempFilePath();
         Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
@@ -228,44 +322,45 @@ public sealed class LocalAppSettingsStoreTests
         await File.WriteAllTextAsync(filePath, json);
         var store = new LocalAppSettingsStore(filePath);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => store.LoadWorkerSyncSettingsAsync(CancellationToken.None));
+        var settings = await store.LoadWorkerSyncSettingsAsync(CancellationToken.None);
 
-        Assert.Contains("refuses plaintext", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(settings);
+        Assert.Equal("legacy-key", settings.AteraApiKey);
+        Assert.Equal("legacy-token", settings.SnipeItApiToken);
         Assert.Equal(json, await File.ReadAllTextAsync(filePath));
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenSnipeTokenBlank()
+    public async Task SaveSyncAppSettingsAsync_ThrowsArgumentException_WhenSnipeTokenBlank()
     {
         var store = new LocalAppSettingsStore(CreateTempFilePath());
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.SaveManualSyncSettingsAsync(
-                CreateManualSyncSettings(snipeItApiToken: " "),
+            () => store.SaveSyncAppSettingsAsync(
+                CreateSyncAppSettings(snipeItApiToken: " "),
                 CancellationToken.None));
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenNormalizeCategoriesAreEmpty()
+    public async Task SaveSyncAppSettingsAsync_ThrowsArgumentException_WhenNormalizeCategoriesAreEmpty()
     {
         var store = new LocalAppSettingsStore(CreateTempFilePath());
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.SaveManualSyncSettingsAsync(
-                CreateManualSyncSettings(modelCategoriesToNormalize: []),
+            () => store.SaveSyncAppSettingsAsync(
+                CreateSyncAppSettings(modelCategoriesToNormalize: []),
                 CancellationToken.None));
     }
 
     [Fact]
-    public async Task SaveManualSyncSettingsAsync_ThrowsArgumentException_WhenIgnoredMacIsInvalid()
+    public async Task SaveSyncAppSettingsAsync_ThrowsArgumentException_WhenIgnoredMacIsInvalid()
     {
         var store = new LocalAppSettingsStore(CreateTempFilePath());
-        var settings = CreateManualSyncSettings();
+        var settings = CreateSyncAppSettings();
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.SaveManualSyncSettingsAsync(
-                new ManualSyncSettings
+            () => store.SaveSyncAppSettingsAsync(
+                new SyncAppSettings
                 {
                     AteraBaseUrl = settings.AteraBaseUrl,
                     AteraApiKey = settings.AteraApiKey,
@@ -285,7 +380,9 @@ public sealed class LocalAppSettingsStoreTests
                     IgnoredMacAddresses = ["not-a-mac"],
                     NameMatchThreshold = settings.NameMatchThreshold,
                     CreateMissingCompanies = settings.CreateMissingCompanies,
-                    CreateMissingModels = settings.CreateMissingModels
+                    CreateMissingModels = settings.CreateMissingModels,
+                    Schedule = settings.Schedule,
+                    Notifications = settings.Notifications
                 },
                 CancellationToken.None));
     }
@@ -409,11 +506,11 @@ public sealed class LocalAppSettingsStoreTests
         };
     }
 
-    private static ManualSyncSettings CreateManualSyncSettings(
+    private static SyncAppSettings CreateSyncAppSettings(
         string? snipeItApiToken = "snipe-token",
         IReadOnlyList<string>? modelCategoriesToNormalize = null)
     {
-        return new ManualSyncSettings
+        return new SyncAppSettings
         {
             AteraBaseUrl = " https://app.atera.com/api/v3 ",
             AteraApiKey = " atera-key ",
@@ -438,7 +535,22 @@ public sealed class LocalAppSettingsStoreTests
             IgnoredMacAddresses = [" 00-09-0f-aa-00-01 ", "0009.0faa.0001", "0009.0ffe.0001"],
             NameMatchThreshold = 0.92D,
             CreateMissingCompanies = true,
-            CreateMissingModels = false
+            CreateMissingModels = false,
+            Schedule = CreateScheduleOptions(),
+            Notifications = new NotificationConfig
+            {
+                Enabled = true,
+                OnEvents = ["ScheduledSyncCompleted", "ScheduledSyncFailed"],
+                SmtpHost = "smtp.example.test",
+                SmtpPort = 587,
+                SmtpUseSsl = true,
+                SmtpUsername = "mailer",
+                SmtpPassword = "smtp-secret",
+                EmailFrom = "sync@example.test",
+                EmailTo = "operator@example.test",
+                WebhookPayloadFormat = WebhookPayloadFormat.GenericJson,
+                WebhookUrl = "https://hooks.example.test/notify"
+            }
         };
     }
 }

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using AteraSnipeSync.Core.Configuration;
 
 namespace AteraSnipeSync.Core.Notifications;
 
@@ -20,9 +21,11 @@ public sealed class NullNotificationPublisher : INotificationPublisher
     /// </summary>
     public Task PublishAsync(
         NotificationRequest request,
+        NotificationConfig config,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(config);
         ValidateRequiredText(request.EventType, nameof(request.EventType));
         ValidateRequiredText(request.Severity, nameof(request.Severity));
         ValidateRequiredText(request.Subject, nameof(request.Subject));

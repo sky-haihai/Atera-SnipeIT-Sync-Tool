@@ -1,20 +1,29 @@
 namespace AteraSnipeSync.WorkerService;
 
 /// <summary>
-/// Hosts the configured sync scheduler and keeps configuration failures from issuing any API requests.
+/// Initializes the disk-backed schedule and owns the independent scheduler lifetime while IPC is hosted separately.
 /// </summary>
 public sealed class Worker(
-    WorkerRuntimeFactory runtimeFactory,
+    WorkerScheduleManager scheduleManager,
+    WorkerScheduler scheduler,
     ILogger<Worker> logger) : BackgroundService
 {
     /// <summary>
-    /// Builds the runtime once at service start, then delegates lifetime and cancellation to the scheduler.
+    /// Starts scheduling even when the Tray is absent; invalid schedule state waits for a later ReloadSchedule command.
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            var scheduler = await runtimeFactory.CreateSchedulerAsync(stoppingToken).ConfigureAwait(false);
+            var initialSchedule = await scheduleManager
+                .InitializeAsync(stoppingToken)
+                .ConfigureAwait(false);
+            if (!initialSchedule.Applied)
+            {
+                logger.LogError(
+                    "Worker started with an invalid schedule; IPC remains available for status and reload commands.");
+            }
+
             await scheduler.StartAsync(stoppingToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -23,9 +32,7 @@ public sealed class Worker(
         }
         catch (Exception exception)
         {
-            logger.LogCritical(
-                exception,
-                "Worker runtime configuration is invalid; no sync was started. Correct appsettings.local.json/environment variables and restart the service.");
+            logger.LogCritical(exception, "Worker scheduler stopped unexpectedly.");
         }
     }
 }

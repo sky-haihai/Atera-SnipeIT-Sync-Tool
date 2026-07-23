@@ -12,11 +12,13 @@ namespace AteraSnipeSync.Tests.Scheduling;
 public sealed class ScheduledSyncRequestFactoryTests
 {
     [Fact]
-    public void CreateScheduledRequest_ForcesScheduledTriggerAndDisablesManualPreflightCsv()
+    public void CreateScheduledRequest_ForcesRealScheduledTriggerAndDisablesManualPreflightCsv()
     {
         var request = ScheduledSyncRequestFactory.CreateScheduledRequest(CreateBaseRequest());
 
         Assert.Equal("scheduled", request.Sync.TriggeredBy);
+        Assert.False(request.Sync.DryRun);
+        Assert.False(request.SnipeIt.DryRun);
         Assert.False(request.SnipeIt.ManualPreflightCsvEnabled);
         Assert.Null(request.SnipeIt.ManualPreflightCsvDirectory);
         Assert.Equal("Assets with MAC Address", request.SnipeIt.MacAddressFieldsetName);
@@ -42,7 +44,7 @@ public sealed class ScheduledSyncRequestFactoryTests
             {
                 BaseUrl = "https://snipe.example.com/api/v1",
                 ApiToken = "snipe-token",
-                DryRun = false,
+                DryRun = true,
                 CreateMissingCompanies = true,
                 CreateMissingModels = true,
                 MacAddressFieldsetName = "Assets with MAC Address",
@@ -54,7 +56,7 @@ public sealed class ScheduledSyncRequestFactoryTests
             },
             Sync = new SyncRunOptions
             {
-                DryRun = false,
+                DryRun = true,
                 TriggeredBy = "manual"
             }
         };

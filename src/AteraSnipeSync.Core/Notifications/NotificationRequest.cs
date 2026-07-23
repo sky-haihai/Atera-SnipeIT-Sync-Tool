@@ -11,5 +11,6 @@ public sealed class NotificationRequest
     public required string Severity { get; init; }
     public required string Subject { get; init; }
     public required string Message { get; init; }
+    public required int Deleted { get; init; }
     public required SyncRunResult? SyncResult { get; init; }
 }

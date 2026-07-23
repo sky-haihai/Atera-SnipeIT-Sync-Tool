@@ -22,6 +22,7 @@ public sealed class NotificationRequestFactoryTests
         Assert.Equal(NotificationEventTypes.ScheduledSyncCompleted, request.EventType);
         Assert.Equal("Information", request.Severity);
         Assert.Equal("Scheduled sync completed", request.Subject);
+        Assert.Contains("Result: Completed", request.Message);
         Assert.Same(result, request.SyncResult);
     }
 
@@ -82,6 +83,26 @@ public sealed class NotificationRequestFactoryTests
     }
 
     [Fact]
+    public void CreateForSyncResult_ReturnsCompletedWarning_WhenCompletedRunHasRecordFailures()
+    {
+        var result = CreateResult(
+            success: true,
+            createdAssets: 2,
+            failedAssets: 1,
+            failures: [CreateFailure("SnipeImport", "SerialConflict", "serial already exists")]);
+
+        var request = NotificationRequestFactory.CreateForSyncResult(result, "scheduled");
+
+        Assert.Equal(NotificationEventTypes.ScheduledSyncCompleted, request.EventType);
+        Assert.Equal("Warning", request.Severity);
+        Assert.Equal("Scheduled sync completed", request.Subject);
+        Assert.Contains("Result: Completed", request.Message);
+        Assert.Contains("CreatedAssets: 2", request.Message);
+        Assert.Contains("FailedAssets: 1", request.Message);
+        Assert.Contains("FirstFailure: Stage=SnipeImport; Code=SerialConflict; Message=serial already exists", request.Message);
+    }
+
+    [Fact]
     public void CreateForSyncResult_UsesCriticalSeverity_ForAuthenticationFailureCode()
     {
         var result = CreateResult(
@@ -102,6 +123,7 @@ public sealed class NotificationRequestFactoryTests
             mappedAssetCount: 3,
             createdAssets: 1,
             updatedAssets: 2,
+            deletedAssets: 3,
             skippedAssets: 3,
             failedAssets: 4,
             warnings: [new ModuleWarning { Source = "AteraPull", Message = "minor issue", Code = "Minor" }],
@@ -112,14 +134,31 @@ public sealed class NotificationRequestFactoryTests
         Assert.Contains("Result: Failed", request.Message);
         Assert.Contains("StartedAtUtc: 2026-06-18T10:00:00.0000000Z", request.Message);
         Assert.Contains("FinishedAtUtc: 2026-06-18T10:00:05.0000000Z", request.Message);
+        Assert.Contains("DryRun: True", request.Message);
         Assert.Contains("PulledAgents: 4", request.Message);
         Assert.Contains("MappedAssets: 3", request.Message);
         Assert.Contains("CreatedAssets: 1", request.Message);
         Assert.Contains("UpdatedAssets: 2", request.Message);
+        Assert.Equal(3, request.Deleted);
+        Assert.Contains("DeletedAssets: 3", request.Message);
         Assert.Contains("SkippedAssets: 3", request.Message);
         Assert.Contains("FailedAssets: 4", request.Message);
         Assert.Contains("WarningCount: 1", request.Message);
         Assert.Contains("FirstFailure: Stage=SnipeImport; Code=SerialConflict; Message=serial already exists", request.Message);
+    }
+
+    [Fact]
+    public void CreateForSyncResult_DoesNotCountPipelineFailureAsFailedAsset()
+    {
+        var result = CreateResult(
+            success: false,
+            failedAssets: 0,
+            failures: [CreateFailure("Mapping", "Mapping.Invalid", "mapping failed")]);
+
+        var request = NotificationRequestFactory.CreateForSyncResult(result, "scheduled");
+
+        Assert.Contains("FailedAssets: 0", request.Message);
+        Assert.Contains("FirstFailure: Stage=Mapping", request.Message);
     }
 
     [Fact]
@@ -165,6 +204,7 @@ public sealed class NotificationRequestFactoryTests
         int mappedAssetCount = 1,
         int createdAssets = 1,
         int updatedAssets = 0,
+        int deletedAssets = 0,
         int skippedAssets = 0,
         int failedAssets = 0,
         IReadOnlyList<ModuleWarning>? warnings = null,
@@ -174,6 +214,7 @@ public sealed class NotificationRequestFactoryTests
         return new SyncRunResult
         {
             Success = success,
+            DryRun = true,
             StartedAt = new DateTimeOffset(2026, 6, 18, 10, 0, 0, TimeSpan.Zero),
             FinishedAt = new DateTimeOffset(2026, 6, 18, 10, 0, 5, TimeSpan.Zero),
             PullResult = new AteraPullResult
@@ -208,6 +249,7 @@ public sealed class NotificationRequestFactoryTests
             {
                 CreatedAssets = createdAssets,
                 UpdatedAssets = updatedAssets,
+                DeletedAssets = deletedAssets,
                 SkippedAssets = skippedAssets,
                 FailedAssets = failedAssets,
                 CreatedCompanies = 0,

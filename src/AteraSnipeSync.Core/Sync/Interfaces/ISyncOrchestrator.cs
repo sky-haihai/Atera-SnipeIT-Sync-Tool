@@ -1,3 +1,5 @@
+using AteraSnipeSync.Core.Common;
+
 namespace AteraSnipeSync.Core.Sync;
 
 /// <summary>
@@ -11,4 +13,15 @@ public interface ISyncOrchestrator
     Task<SyncRunResult> RunOnceAsync(
         SyncRunRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes one sync run while reporting sanitized progress; implementations without progress support may use the default delegation.
+    /// </summary>
+    Task<SyncRunResult> RunOnceAsync(
+        SyncRunRequest request,
+        CancellationToken cancellationToken,
+        IProgress<SyncProgressUpdate>? progress)
+    {
+        return RunOnceAsync(request, cancellationToken);
+    }
 }

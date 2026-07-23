@@ -29,6 +29,7 @@ public sealed class SyncOrchestratorTests
 
         Assert.Equal(["pull", "map", "import"], calls);
         Assert.True(result.Success);
+        Assert.True(result.DryRun);
         Assert.Same(pullResult, result.PullResult);
         Assert.Same(importBatch, result.ImportBatch);
         Assert.Same(importResult, result.ImportResult);
@@ -93,6 +94,7 @@ public sealed class SyncOrchestratorTests
 
         Assert.Equal(["pull"], calls);
         Assert.False(result.Success);
+        Assert.True(result.DryRun);
         Assert.Null(result.PullResult);
         Assert.Null(result.ImportBatch);
         Assert.Null(result.ImportResult);
@@ -117,6 +119,7 @@ public sealed class SyncOrchestratorTests
 
         Assert.Equal(["pull", "map"], calls);
         Assert.False(result.Success);
+        Assert.True(result.DryRun);
         Assert.Same(pullResult, result.PullResult);
         Assert.Null(result.ImportBatch);
         Assert.Null(result.ImportResult);
@@ -150,7 +153,7 @@ public sealed class SyncOrchestratorTests
     }
 
     [Fact]
-    public async Task RunOnceAsync_ConvertsImportFailuresToRunFailures()
+    public async Task RunOnceAsync_CompletesAndKeepsRunFailures_WhenImportReturnsRecordFailures()
     {
         var calls = new List<string>();
         var importFailure = new ImportFailure
@@ -171,12 +174,32 @@ public sealed class SyncOrchestratorTests
 
         var result = await orchestrator.RunOnceAsync(CreateRequest(), CancellationToken.None);
 
-        Assert.False(result.Success);
+        Assert.True(result.Success);
         Assert.NotNull(result.ImportResult);
         var failure = Assert.Single(result.Failures);
         Assert.Equal("SnipeImport", failure.Stage);
         Assert.Equal("SnipeImport.SerialConflict", failure.Code);
         Assert.Equal("asset 'LAPTOP-01' failed: serial conflict", failure.Message);
+    }
+
+    [Fact]
+    public async Task RunOnceAsync_ReturnsFailedRun_WhenImportResultIsCancelled()
+    {
+        var calls = new List<string>();
+        var orchestrator = CreateOrchestrator(
+            new FakeAteraClient(calls),
+            new FakeInventoryMapper(calls),
+            new FakeSnipeImporter(calls)
+            {
+                Result = CreateImportResult(cancelled: true)
+            },
+            out _);
+
+        var result = await orchestrator.RunOnceAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.True(result.ImportResult?.Cancelled);
+        Assert.Equal(["pull", "map", "import"], calls);
     }
 
     [Fact]
@@ -364,12 +387,14 @@ public sealed class SyncOrchestratorTests
     private static SnipeImportResult CreateImportResult(
         IReadOnlyList<ImportFailure>? failures = null,
         IReadOnlyList<ModuleWarning>? warnings = null,
-        int failedAssets = 0)
+        int failedAssets = 0,
+        bool cancelled = false)
     {
         return new SnipeImportResult
         {
             CreatedAssets = 1,
             UpdatedAssets = 0,
+            DeletedAssets = 0,
             SkippedAssets = 0,
             FailedAssets = failedAssets,
             CreatedCompanies = 0,
@@ -377,6 +402,7 @@ public sealed class SyncOrchestratorTests
             CreatedModels = 0,
             UpdatedModels = 0,
             DryRun = true,
+            Cancelled = cancelled,
             Actions = [],
             Failures = failures ?? [],
             Warnings = warnings ?? []

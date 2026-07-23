@@ -1,19 +1,55 @@
+using AteraSnipeSync.Core.Configuration;
+
 namespace AteraSnipeSync.TrayApp;
 
 /// <summary>
-/// Starts the Windows Forms manual sync test application.
+/// Routes restricted elevated helper mode before starting the single-instance Windows Tray application.
 /// </summary>
-static class Program
+internal static class Program
 {
     /// <summary>
-    /// The main entry point for manual local sync validation without requiring WorkerService.
+    /// Runs one exact helper operation or the normal NotifyIcon message loop; normal exit never stops WorkerService.
     /// </summary>
     [STAThread]
-    static void Main()
+    private static int Main(string[] args)
     {
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
-        ApplicationConfiguration.Initialize();
-        Application.Run(new ManualSyncForm());
-    }    
+        if (ServiceMaintenanceArguments.HasMaintenanceSwitch(args))
+        {
+            if (!ServiceMaintenanceArguments.TryParse(args, out var operation))
+            {
+                return ServiceMaintenanceExitCodes.InvalidArguments;
+            }
+
+            return new ElevatedServiceMaintenanceRunner()
+                .RunAsync(operation, CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+        }
+
+        if (!TraySingleInstanceGuard.TryAcquire(out var guard))
+        {
+            MessageBox.Show(
+                "Atera Snipe-IT Auto Sync TrayApp is already running.",
+                "Atera Snipe-IT Auto Sync",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return 0;
+        }
+
+        using (guard)
+        {
+            ApplicationConfiguration.Initialize();
+            AntdUI.Config.Mode = AntdUI.TMode.Light;
+            AntdUI.Config.Animation = true;
+            Application.SetDefaultFont(new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point));
+            var settingsStore = new LocalAppSettingsStore(LocalAppSettingsStore.GetDefaultFilePath());
+            Application.Run(new TrayApplicationContext(
+                new WorkerIpcClient(),
+                settingsStore,
+                new WorkerServiceStatusReader(),
+                new WorkerServiceMaintenanceLauncher()));
+        }
+
+        return 0;
+    }
 }

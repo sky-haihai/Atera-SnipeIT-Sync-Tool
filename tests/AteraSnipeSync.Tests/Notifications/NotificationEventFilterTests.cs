@@ -100,6 +100,7 @@ public sealed class NotificationEventFilterTests
             Severity = "Information",
             Subject = "Sync completed",
             Message = "Sync completed.",
+            Deleted = 0,
             SyncResult = null
         };
     }

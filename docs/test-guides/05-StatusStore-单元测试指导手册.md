@@ -1,5 +1,9 @@
 # Status Store - 单元测试指导手册
 
+## 2026-07 Run failures versus asset failures
+
+`SaveAsync_RecordsPipelineFailureWithoutInventingFailedAsset` writes a local temporary history document for an Atera-stage failure and verifies `failureCount=1`, `assetsFailed=0`, latest `Failed=0`, and `run.dryRun` comes from `SyncRunResult`. A structured Snipe import failure continues to use `SnipeImportResult.FailedAssets`.
+
 ## 1. 范围
 
 本指南覆盖 Module 5 Status Store 的本地文件持久化测试。
@@ -82,7 +86,7 @@ Status Store 测试不使用 HTTP client，不访问 Atera API，不访问 Snipe
 - 同一 UTC tick 冲突时追加短 GUID suffix，不覆盖旧文件
 - JSON 顶层包含 `schemaVersion`、`run`、`summary`、resource change sets、`warnings`、`failures`
 - `assets` / `companies` / `models` / `manufacturers` / `categories` 都包含 `created`、`updated`、`deleted`、`skipped`、`failed`
-- 当前无删除策略下 `deleted` arrays 保留但为空
+- 没有 delete action 时 `deleted` arrays 保留但为空；有 delete action 时保存 name、identifier、execution flag 与安全 message
 - `ReadLatestAsync` 从最新有效 history 重建 `SyncStatusSnapshot`
 - 最新文件 malformed 时会跳过并读取下一个有效 history
 - `LastSuccessAt` 从历史文件扫描得到，不只看最新文件
@@ -111,3 +115,16 @@ Status Store 自动化测试必须保持本地、离线、可重复。
 - 依赖 WorkerService、TrayApp 或真实 DI host
 
 如未来需要人工检查真实 history 文件展示效果，应由项目 owner 手动运行完整应用，并确保 API key 不打印、不记录、不提交。
+
+## 8. 2026-07 Completed/Failed 与 Last run 计数
+
+新增/扩展测试确认：
+
+- `SaveAsync_WritesSuccessAndFailureDetails_WhenCompletedRunHasRecordFailures`：完整 run 同时存在成功计数和记录级 failure 时，`run.result` 写 `Success` 并保留 failed count/failure details。
+- `SaveAsync_WritesFailed_WhenIncompleteRunHasReferenceResourceOutcome`：未完成 run 即使已有 company 等 reference-resource 成功计数，仍写 `Failed`。
+- `SaveAsync_WritesFailedHistoryFile`：没有任何成功资源计数时仍为 `Failed`。
+- `ReadLatestAsync_CompletedRunWithRecordFailuresAdvancesLastSuccessAndKeepsCounts`：完整 run 的记录失败不阻止 `LastSuccessAt` 前进，snapshot 仍保留 asset counts，`LastError` 为 null。
+- `ReadLatestAsync_ReturnsNewestValidSnapshot`：snapshot 投影真实 `Deleted` count，供 Worker/Tray 的 count-only Last run 使用。
+- `SaveAsync_WritesDeletedAssetAuditAndRealCount`：`summary.assetsDeleted` 来自 importer count；`assets.deleted` 保存 `ATERA-9999`、Snipe-IT id `501` 与完整安全审计 message。
+
+这些测试只构造本地结果并写入临时 history，不调用真实 Atera/Snipe-IT API。

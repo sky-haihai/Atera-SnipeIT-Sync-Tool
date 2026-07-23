@@ -21,7 +21,8 @@ public sealed class ScheduleCalculator
         }
 
         var timeZone = TimeZoneInfo.FindSystemTimeZoneById(options.TimeZoneId);
-        var localNow = TimeZoneInfo.ConvertTime(nowUtc, timeZone);
+        var normalizedNowUtc = nowUtc.ToUniversalTime();
+        var localNow = TimeZoneInfo.ConvertTime(normalizedNowUtc, timeZone);
         var runTimes = options.RunTimes.Order().ToList();
 
         for (var dayOffset = 0; dayOffset <= 366 * 2; dayOffset++)
@@ -35,12 +36,16 @@ public sealed class ScheduleCalculator
             foreach (var runTime in runTimes)
             {
                 var localDateTime = localDate.ToDateTime(runTime, DateTimeKind.Unspecified);
-                if (localDateTime <= localNow.DateTime || timeZone.IsInvalidTime(localDateTime))
+                if (timeZone.IsInvalidTime(localDateTime))
                 {
                     continue;
                 }
 
-                return ToUtc(localDateTime, timeZone);
+                var candidateUtc = ToUtc(localDateTime, timeZone);
+                if (candidateUtc > normalizedNowUtc)
+                {
+                    return candidateUtc;
+                }
             }
         }
 
@@ -112,7 +117,8 @@ public sealed class ScheduleCalculator
     {
         if (timeZone.IsAmbiguousTime(localDateTime))
         {
-            var offset = timeZone.GetAmbiguousTimeOffsets(localDateTime).Max();
+            // The smaller offset maps the repeated local clock value to the later UTC instant.
+            var offset = timeZone.GetAmbiguousTimeOffsets(localDateTime).Min();
             return new DateTimeOffset(localDateTime, offset).ToUniversalTime();
         }
 

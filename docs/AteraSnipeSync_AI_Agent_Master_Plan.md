@@ -81,12 +81,13 @@
 - 不允许创建 model
 - 不允许创建 asset
 - 不允许更新 asset
+- 不允许删除 asset
 
-### 2.5 不做删除
+### 2.5 只删除明确属于 Atera 的过期资产
 
-第一版不删除、不归档 Snipe-IT asset。
+Snipe-IT Hardware Asset Tag 以 `ATERA-` 开头时，表示该资产属于自动同步 namespace。完整 tag 不再出现在一次完整 Atera inventory pull 的映射结果中，真实同步会通过官方 `DELETE /hardware/{id}` soft-delete 该资产。
 
-如果设备从 Atera 消失，第一版只是不再更新它。
+非 `ATERA-` 资产永不参与自动删除；dry-run 只报告计划删除，不执行 mutation。任何 source planning failure 或不完整 hardware snapshot 都必须 fail closed，不执行删除。
 
 ---
 
@@ -791,7 +792,6 @@ Tray App 是可选本地 UI。
 - Snipe-IT API token
 - default status ID
 - sync interval
-- dry-run
 - notification options
 ```
 
@@ -845,7 +845,7 @@ Tray App 可以编辑 local config。
 - Sync Orchestrator
 - Status Store
 - Runtime Scheduler / Worker
-- Dry-run mode
+- Preview dry-run mode（固定无写入，不作为 scheduled 配置）
 - Basic logging
 - Basic local config
 - Basic Tray App
@@ -862,7 +862,6 @@ Tray App 可以编辑 local config。
 ### 13.3 第一版不做
 
 ```text
-- 删除 Snipe-IT asset
 - archive disappeared devices
 - complex UI
 - manual Run Now

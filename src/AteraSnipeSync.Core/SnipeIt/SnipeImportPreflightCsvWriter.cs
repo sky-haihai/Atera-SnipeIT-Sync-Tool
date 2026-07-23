@@ -57,7 +57,7 @@ internal static class SnipeImportPreflightCsvWriter
     private static string BuildAssetsCsv(IReadOnlyList<SnipeAssetPreflightRow> rows)
     {
         var builder = new StringBuilder();
-        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "MacAddresses", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag", "ConflictingFields", "ConflictingValue", "ConflictingAssets", "FailureCode", "FailureMessage", "DeviceType");
+        AppendRow(builder, "Operation", "AssetTag", "Name", "Serial", "MacAddresses", "CompanyName", "ModelName", "CategoryName", "ManufacturerName", "ExistingAssetId", "ExistingAssetTag", "ConflictingFields", "ConflictingValue", "ConflictingAssets", "FailureCode", "FailureMessage", "ChangeReasons", "DeviceType");
 
         foreach (var row in rows)
         {
@@ -79,6 +79,7 @@ internal static class SnipeImportPreflightCsvWriter
                 row.ConflictingAssets,
                 row.FailureCode,
                 row.FailureMessage,
+                row.ChangeReasons,
                 row.DeviceType);
         }
 

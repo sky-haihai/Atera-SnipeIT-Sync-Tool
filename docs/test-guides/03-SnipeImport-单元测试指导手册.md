@@ -1,5 +1,9 @@
 # Snipe Import - 单元测试指导手册
 
+## 2026-07 Company pagination and component regression
+
+Run `dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~SnipeImporterTests"`. The mocked suite covers `limit=500`/`offset` multi-page company snapshots, premature empty pages, changing `total`, the 10000-page safety limit, unchanged request payloads and retry/business-error behavior. Key cases are `ImportAsync_LoadsAllCompanyPages_BeforePlanningWrites`, `ImportAsync_BlocksWrites_WhenCompanyTotalChangesBetweenPages`, `ImportAsync_BlocksCompanyPlanning_WhenCompanySnapshotCountIsIncomplete`, and `ImportAsync_BlocksWrites_WhenCompanySnapshotExceedsSafetyPageLimit`. No test calls a real Snipe-IT API.
+
 ## 1. 测试目标
 
 Snipe Import Module 的测试验证：
@@ -16,6 +20,8 @@ Snipe Import Module 的测试验证：
 - request-derived failure message 会显示操作对象、HTTP method 和相对 endpoint，但不显示 token、request payload 或 raw response JSON
 - every Company、Asset Category、Model 和 Hardware Asset create payload 的 notes 都包含 `First added by Atera-SnipeIT Sync Tool at {UTC timestamp}`
 - create/update asset payload 的 notes 会包含 `Auto Synced from Atera at {UTC timestamp}`；update 会保留既有合法 first-added marker，但不会给原本没有 marker 的既有资产补造首次创建时间
+- stale `ATERA-` Hardware Asset 会按完整 asset tag 与当前 Atera batch 对比并 soft-delete；非 `ATERA-` 人工资产永不删除
+- delete success/failure log、action 和 history 能定位 Snipe-IT asset id、asset tag、设备名、Atera Agent ID 与 `MissingFromAtera` 原因
 - `InventoryMapper` 会把 Atera `AgentInfo.MacAddresses` 传递到 `SnipeAssetImportRecord.MacAddresses`
 - repeated company/category/manufacturer/model references are planned once before asset matching
 - all unique company names share one complete `GET /companies` snapshot and are compared through an in-memory normalized-name index
@@ -455,3 +461,47 @@ dotnet test tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --no-restore 
 - `ImportAsync_PreviewWarnsOnceForAliasTarget_WhenSourceAndAliasManufacturersAreMissing`：两个精确 lookup 均未命中时只输出一次 `SnipeImport.ManufacturerMissing`，warning 指向最终 alias target。
 - `ImportAsync_ReusesUniqueModelNumber_WhenCategoryWillBeNormalizedToPlannedCategory` 覆盖 default category 尚待创建的情况：同一个 `PlannedCategoryCreate` 同时驱动 Model normalization 与 record category 后，复用现有 Model id，并保留一条 Model Modify。
 - Preview 与 Sync Now 共用同一个 `PlanReferencesAsync`，因此 direct-first 决策不会在执行阶段重新逐 asset 计算。多个 model-number matches 的现有 fail-closed tests 保持不变；alias 不允许绕过歧义阻塞。
+
+## Asset 真正变更与 no-op 测试
+
+运行：
+
+```powershell
+dotnet test tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~SnipeImporterTests"
+```
+
+新增重点用例：
+
+- `ImportAsync_PreviewOmitsUnchangedAssetFromPreflightCsv`：mocked hardware snapshot 的 asset tag、status/model/company ids、name、reliable serial、payload MAC 与业务 notes 全部和 source 相同；first-added 与旧 `Auto Synced` 时间行不参与 diff。断言 `UpdatedAssets=0`、`SkippedAssets=1`、planned Skip action，并且 `snipeit-assets-plan.csv` 只有包含 `ChangeReasons` 的 header。
+- `ImportAsync_SkipsHardwarePatch_WhenExistingAssetIsUnchanged`：相同 fixture 在真实运行产生 `WasExecuted=true` 的 Skip action，但不发送 `POST`/`PATCH`，也不把 no-op 计为 updated asset。
+- `ImportAsync_PreviewListsOnlyRealAssetChanges_WithStableReasons`：同一个 asset tag 下改变 status/model/company ids、name、可靠 serial、payload MAC 与业务 notes；Preview 输出唯一 Modify row，并按 `Status; Model; Company; Name; Serial; MacAddress; Notes` 稳定顺序显示原因。
+- `ImportAsync_PreviewFailsSafeToModify_WhenSnapshotIdsAreMissing`：snapshot 缺少 `status_label.id`、`model.id`、`company.id` 时不能证明相等，因此保留 Modify 并列出 `Status; Model; Company`。
+- `ImportAsync_DoesNotTreatUnmanagedSerialOrIgnoredMacAsAChange`：`SerialIsReliableIdentity=false` 的 audit-only serial 和 configured ignored MAC 都不在 payload 管理范围内，单独不同不会触发 PATCH。
+- `ImportAsync_LogsChangedFieldsAfterSuccessfulAssetUpdate`：mocked PATCH 成功后，断言结构化 importer information log、per-record progress（因此会进入手动运行的 daily log）与 executed action/history 都包含稳定的 `Changed fields: Name, MacAddress, Notes.`，且不输出 notes 正文。
+- `ImportAsync_DoesNotLogChangedFields_WhenAssetUpdateFails`：mocked `200 + status:error` 的 PATCH 计入 asset failure；断言没有 executed action，也没有任何成功 `Changed fields` logger/progress entry。
+
+`Asset(...)` fixture 默认输出官方 hardware representation 使用的 nested `company.id`、`model.id` 与 `status_label.id`；测试可显式传 null 模拟不完整 snapshot。所有请求仍由 `StubHttpMessageHandler` 提供，不调用真实 Snipe-IT API，也不使用真实 token。
+
+人工 Preview 验收时应确认：完全一致的 existing asset 不出现在 asset CSV；真正改变的 Modify row 显示非空 `ChangeReasons`；只有审计时间戳变旧不会制造 Modify。真实凭据只保存在本地配置中，不得打印、写入日志或提交。
+
+## 2026-07 Atera-managed stale asset soft-delete 测试
+
+实现使用官方 `DELETE /hardware/{id}`，自动化测试只通过 `StubHttpMessageHandler` 返回内存 JSON，不调用真实 Snipe-IT：
+
+- `ImportAsync_DeletesOnlyStaleAteraManagedAsset_AndAuditsIdentity`：当前 `ATERA-1001` 即使 target tag 大小写/空白不同也受保护；只删除 stale `ATERA-9999`，保留 `MANUAL-502`；DELETE 无 body。成功 action 和 Information log 包含 id、tag、name、agent id、reason/result，且不包含 token 或 notes sentinel。
+- `ImportAsync_DryRunPlansDeleteAndWritesCsv_WithoutDeleteRequest`：`DeletedAssets` 统计 planned delete；action 为 `WasExecuted=false`；`snipeit-assets-plan.csv` 包含 Delete、existing id/tag 和 `MissingFromAtera`；HTTP trace 无 DELETE。
+- `ImportAsync_EmptyAteraBatchDeletesAllManagedAssets_ButPreservesManualAssets`：空 Atera batch 仍读取 Hardware snapshot，按 asset id 顺序删除全部 `ATERA-` assets，保留人工 asset。
+- `ImportAsync_DeleteFailureIsAudited_AndDoesNotBlockNextCandidate`：第一个 `status=error` 产生 `SnipeImport.BusinessError`、Warning log 和 `FailedAssets`；第二个候选仍成功，`DeletedAssets` 只统计成功项。
+- `ImportAsync_MalformedHardwareSnapshotWithEmptyBatch_PerformsNoMutation`：空 batch 下 malformed snapshot 产生安全 failure，且无 POST/PATCH/DELETE。
+
+全局 fail-closed 规则：任意 source validation/reference/matching/duplicate-target failure 都关闭该 run 的 stale deletes；已有 source create/update 可按既有 partial-processing 规则继续。这样临时 mapping/reference 问题不会被解释成 Atera 设备消失。
+
+本次验证命令与结果：
+
+```powershell
+dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~SnipeImporterTests"
+# Passed: 89, Failed: 0
+
+dotnet test AteraSnipeSync.sln --no-restore
+# Passed: 315, Failed: 0
+```

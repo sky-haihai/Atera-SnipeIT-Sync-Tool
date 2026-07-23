@@ -1,18 +1,23 @@
-# Worker Scheduler - 单元测试指导手册
+# Worker Scheduler / WorkerService - 单元测试指导手册
+
+## 2026-07 UTC polling and runtime-state regression
+
+Run the scheduling, Worker schedule-manager, state-store and runtime-factory tests together. Coverage includes 61-day monthly gaps, Edmonton 09:00 across DST, later-UTC ambiguous time, invalid spring-forward time, strict UTC `Z` state JSON, corrupt-state rebuild, overdue/restart catch-up once, missed-period coalescing, fingerprint changes, disable/re-enable invalidation, claim persistence before execution, 15-second polling, and exactly one complete settings read per run.
 
 ## 1. 测试目标
 
-Worker Scheduler tests verify:
+本手册覆盖 WorkerService 的正式调度与本机 IPC 实现：
 
-- daily / weekly / monthly next-run calculation
-- monthly 29/30/31 behavior skips months where the selected date does not exist
-- monthly last-day-of-month behavior
-- invalid weekly/monthly schedules are rejected before save/use
-- scheduler-triggered sync sets `TriggeredBy = "scheduled"`
-- scheduler-triggered sync disables manual preflight CSV
-- overlapping scheduled runs are skipped when `PreventOverlappingRuns = true`
+- Worker 启动时读取 schedule，Tray 不运行时仍可独立调度。
+- `ReloadSchedule` 重读共享 JSON、替换 future schedule 并重新计算 next-run。
+- Scheduled、Connection Test、Preview、Sync Now 共用同一个 non-overlap gate。
+- 每次 run 重读完整 JSON，并创建独立 runtime snapshot。
+- `TestConnections` 在一个 lease 内分别返回 Atera 与 Snipe-IT 的脱敏结果。
+- IPC 使用 versioned JSON Lines，保证 Accepted → Progress → terminal 顺序。
+- `Cancel` 只作用于匹配的 Tray request id。
+- plaintext JSON credentials 可被 Worker 读取，但不会进入 IPC summary 或测试输出。
 
-Scheduled sync must not create manual preflight CSV files. The CSV preview flow belongs only to manual sync.
+旧 Core `ScheduleCalculator`、`ScheduledSyncRequestFactory` 与 `SyncScheduler` 测试继续保留，用于回归既有 schedule calculation/request contract；新的 reloadable service loop 由 `WorkerSchedulerTests` 覆盖。
 
 ## 2. 测试文件
 
@@ -20,82 +25,128 @@ Scheduled sync must not create manual preflight CSV files. The CSV preview flow 
 tests/AteraSnipeSync.Tests/Scheduling/ScheduleCalculatorTests.cs
 tests/AteraSnipeSync.Tests/Scheduling/ScheduledSyncRequestFactoryTests.cs
 tests/AteraSnipeSync.Tests/Scheduling/SyncSchedulerTests.cs
+tests/AteraSnipeSync.Tests/Scheduling/SyncRunCoordinatorTests.cs
+tests/AteraSnipeSync.Tests/Configuration/LocalAppSettingsStoreTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerScheduleManagerTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerSchedulerTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerRuntimeFactoryTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerConnectionTesterTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerCommandHandlerTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerIpcServerTests.cs
+tests/AteraSnipeSync.Tests/WorkerService/WorkerServiceIdentityTests.cs
 ```
 
-Production code:
+Worker production code位于：
 
 ```text
-src/AteraSnipeSync.Core/Scheduling/SyncScheduleOptions.cs
-src/AteraSnipeSync.Core/Scheduling/ScheduleFrequency.cs
-src/AteraSnipeSync.Core/Scheduling/ScheduleCalculator.cs
-src/AteraSnipeSync.Core/Scheduling/ScheduledSyncRequestFactory.cs
-src/AteraSnipeSync.Core/Scheduling/SyncScheduler.cs
+src/AteraSnipeSync.Core/Runtime/Ipc/
+src/AteraSnipeSync.Core/Runtime/Windows/WorkerServiceIdentity.cs
+src/AteraSnipeSync.Core/Scheduling/Interfaces/ISyncRunCoordinator.cs
+src/AteraSnipeSync.Core/Scheduling/SyncRunCoordinator.cs
+src/AteraSnipeSync.Core/Scheduling/WorkerOperationNames.cs
+src/AteraSnipeSync.Core/Scheduling/WorkerScheduleSnapshot.cs
+src/AteraSnipeSync.Core/Scheduling/ScheduleReloadResult.cs
+src/AteraSnipeSync.WorkerService/
 ```
 
 ## 3. 运行测试
 
+Worker 专项测试：
+
 ```powershell
+dotnet test tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~WorkerService|FullyQualifiedName~SyncRunCoordinator|FullyQualifiedName~LocalAppSettingsStoreTests.LoadWorkerSyncSettings"
+```
+
+完整验证：
+
+```powershell
+dotnet test AteraSnipeSync.sln --no-restore
 dotnet build AteraSnipeSync.sln --no-restore
-dotnet test AteraSnipeSync.sln --no-build
 ```
 
-Only scheduler tests:
-
-```powershell
-dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --filter "FullyQualifiedName~AteraSnipeSync.Tests.Scheduling"
-```
+测试项目 target 为 `net10.0-windows`，因为它直接引用 Windows-targeted WorkerService 并执行本机 Named Pipe ACL/transport 测试。
 
 ## 4. 重点测试说明
 
-`GetNextRunUtc_ReturnsNextDailyTime`
+### Schedule 与 runtime
 
-- verifies multiple local run times are sorted and the next future time is selected
+- `WorkerScheduleManagerTests` 验证 disabled startup、valid reload、version increment、next-run 变化和 invalid reload fail-closed。
+- `WorkerSchedulerTests` 验证 scheduled run 取得共享 lease、busy 时 skip、不 queue，并且每次 trigger 都调用 runtime factory。
+- `WorkerRuntimeFactoryTests.CreateSyncRuntimeAsync_ReloadsSettingsForEveryRun` 在两次 run 之间替换 fake JSON snapshot，验证新 Atera/Snipe token 与独立 orchestrator 被使用；HTTP handler 如被调用会立即失败。
+- `LocalAppSettingsStoreTests.LoadWorkerSyncSettingsAsync_LoadsPlaintextJsonCredentials_WithoutChangingFile` 使用临时 JSON 验证明文 credential round-trip，且读取不会改写文件。
 
-`GetNextRunUtc_ReturnsNextWeeklyDay`
+### 全局 non-overlap 与 Cancel
 
-- verifies selected weekdays are honored
+- `SyncRunCoordinatorTests` 验证同一时间只允许一个 lease、active metadata 正确、Dispose idempotent。
 
-`GetNextRunUtc_SkipsMonthlyDay_WhenMonthDoesNotContainThatDay`
+## 2026-07 Completed notification integration regression
 
-- verifies a day like 31 is skipped in months without that date
+`WorkerCommandHandlerTests.ExecuteAsync_SyncNow_PublishesCompletedNotification_WhenCompletedRunHasRecordFailures` 使用纯内存 orchestrator 返回一个完整但含一条 asset failure 的 result。断言 IPC terminal 为 Completed、`SyncResult.Success = true`、`Failed = 1`，并且只匹配 `ManualSyncCompleted`，通知 severity 为 Warning、message 为 `Result: Completed`。publisher 是 capturing fake，不发送 SMTP/webhook；Atera/Snipe-IT client 不会被调用。
+- `WorkerCommandHandlerTests.ExecuteAsync_SecondRunReturnsBusy_AndCancelTargetsFirstRequest` 让 Preview 阻塞，再尝试 Sync Now；第二项必须立刻 Busy，Cancel 只取消第一个 request。
+- `ReloadSchedule` 不取得 run lease，因此 Worker 正在运行时仍可应用 future schedule；Tray UI 是否禁用按钮属于 Tray 状态机测试。
 
-`GetNextRunUtc_ReturnsMonthlyLastDay_WhenConfigured`
+### Connection Test
 
-- verifies `RunOnLastDayOfMonth` schedules the actual final day of the month
+- Atera probe 使用 fake `IAteraClient`，生产配置限制为一页、一条记录。
+- Snipe-IT probe 使用 mocked HTTP handler，断言 `GET /api/v1/hardware?limit=1`、Bearer header、JSON Accept/Content-Type；不连接真实服务。
+- Atera failure 后仍必须测试 Snipe-IT；cancellation 则停止剩余 probe。
+- 两端 business failure 仍返回一个 completed combined result，并分别标记 `Succeeded = false`。
 
-`CreateScheduledRequest_ForcesScheduledTriggerAndDisablesManualPreflightCsv`
+### IPC 与脱敏
 
-- verifies automatic scheduler sync cannot accidentally generate manual CSV preview files
+- `WorkerIpcServerTests.PipeFactory_AcceptsLocalClient` 使用真实 Windows Named Pipe，验证 ACL pipe 可接受本机 client；Win32 `ERROR_PIPE_LOCAL (229)` 是本机连接的成功判定之一。
+- `LongCommand_WritesAcceptedProgressAndCompletedInOrder` 验证 JSON Lines 顺序与 exactly one terminal result。
+- malformed JSON 在 dispatch 前返回 Error，handler call count 必须为 0。
+- sync terminal payload 使用 `WorkerSyncResultSummary`；测试序列化结果，确认 raw Atera record 不会穿过 IPC。
+- latest status 保存失败时，structured sync outcome 仍返回，message 明确提示 audit status 未保存。
+- `WorkerServiceIdentityTests` 固定 service name、display name 与同目录 Worker executable filename，供后续 Tray maintenance 共用。
 
-`RunScheduledSyncAsync_SkipsSecondRun_WhenOverlapPreventionEnabled`
+## 5. Mocking 策略与安全边界
 
-- verifies a second scheduled trigger is skipped while the previous run is still active
+- Atera 自动测试使用 fake `IAteraClient` 或 mocked `HttpMessageHandler`。
+- Snipe-IT 自动测试只使用 mocked `HttpMessageHandler`。
+- runtime construction 测试使用拒绝所有网络请求的 handler。
+- scheduler 使用 fake settings reader、runtime factory、status store、notification publisher 和 controlled time。
+- IPC transport 测试只连接当前机器上的随机 pipe name，不操作 Windows Service Control Manager。
+- 自动测试不得读取真实 `%ProgramData%` config、不得使用真实 API key/token、不得注册/启动/停止真实 Service。
 
-## 5. Computer/Server Category 配置验证
+## 6. 人工验收
 
-运行：
+本轮代码不自动注册 Service。完成 Tray service-maintenance UI 后，人工验证：
 
-```powershell
-dotnet test tests/AteraSnipeSync.Tests/AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~LocalAppSettingsStoreTests|FullyQualifiedName~ScheduledSyncRequestFactoryTests|FullyQualifiedName~SyncSchedulerTests"
-```
+1. 把 TrayApp 与 `AteraSnipeSync.WorkerService.exe` 放在同一目录。
+2. 通过 `Re-register & Restart` 注册固定 service name `AteraSnipeItAutoSync`。
+3. 关闭 Tray，等待下一次 schedule，确认 Worker 仍执行。
+4. 重新打开 Tray，保存新 schedule，确认 `ReloadSchedule` 返回新 next-run。
+5. 发起 Preview 时尝试另一个 run，确认 Worker 返回 Busy；Cancel 只取消该 Tray run。
+6. 日志、status、IPC capture 和 CSV 中不得出现 API key、Bearer token 或完整 raw API body。
 
-验证点：
+任何真实 API smoke test 都必须由项目 owner 手工执行；credential 只保存在本机未跟踪 JSON，不得打印、记录或提交。
+## 2026-07 Notification command/runtime coverage
 
-- 保存后的 Mapping JSON 只使用 `DefaultCategoryName`，并移除短期存在过的 `DefaultComputerCategoryName` 与 `DefaultServerCategoryName`。
-- `LoadManualSyncSettingsAsync_UsesComputerFieldAsFallbackForSplitCategoryConfig` 验证双字段配置回退为单一 Computer 值，Server 字段不参与 runtime。
-- Worker composition 对单一 category 执行必填校验；scheduled request 保留原 `MappingOptions.DefaultCategoryName`。
-- 测试只使用临时配置文件与 fake scheduler dependencies，不访问真实 API。
+- `WorkerCommandHandlerTests.ExecuteAsync_TestNotifications_ReturnsIndependentSanitizedResults` 使用 fake tester 验证 payload-free command/result 与 run-gate release。
+- `ExecuteAsync_SyncNow_PublishesConfiguredManualNotification` 验证 manual event type 和 publisher 收到相同 immutable config snapshot。
+- notification test 不调用 runtime factory/API clients；scheduled/manual publisher 和 test sender 全部离线替身。
 
-## 6. Mocking Strategy
+## 2026-07 Last run count projection
 
-Scheduler tests use fake in-memory implementations of:
+`WorkerCommandHandlerTests.ExecuteAsync_SyncNow_ReturnsSummaryWithoutRawAteraRecords` 使用 `SnipeImportResult.DeletedAssets = 2` 并断言 `WorkerSyncResultSummary.Deleted = 2`，同时继续证明 raw Atera records 不进入 IPC。`Skipped` 仍作为 IPC wire member 传输，由 Tray 显示为 `No change`；Worker 不为 Latest run 生成 Success/Failed 展示文本。
 
-- `ISyncOrchestrator`
-- `ISyncStatusStore`
-- `INotificationPublisher`
+## 2026-07 Fixed Unknown mapping fallback coverage
 
-Tests must not call real Atera or Snipe-IT APIs. Scheduled request tests assert the request shape passed to the orchestrator instead of executing network work.
+`WorkerRuntimeFactoryTests.CreateSyncRuntimeAsync_ReloadsSettingsForEveryRun` 向 `SyncAppSettings` 故意提供冲突的 custom company/manufacturer/model fallback，并断言正式 `BaseRequest.Mapping` 仍使用：
 
-`CreateScheduledRequest_ForcesScheduledTriggerAndDisablesManualPreflightCsv` 同时断言 `IgnoredMacAddresses`、`MacAddressFieldsetName`、`ModelCategoryNormalizationTargetName` 与 `ModelCategoriesToNormalize` 被保留，确保 scheduled run 与 Manual Sync 使用相同的 Model 准备和过滤配置。
+- `Unknown Company`
+- `Unknown Manufacturer`
+- `Unknown Model`
 
-`WorkerRuntimeFactory` 的 solution build 必须验证 `ManualSyncSettings.ManufacturerAliases` 能传入 `MappingOptions.ManufacturerAliases`。该配置不进入 Snipe API options；自动测试不访问真实 API。
+测试使用拒绝所有网络请求的 `HttpMessageHandler`；runtime composition 不访问 Atera 或 Snipe-IT。
+
+## 2026-07 Scheduled Dry-Run 配置删除回归
+
+- `WorkerRuntimeFactoryTests.CreateSyncRuntimeAsync_ReloadsSettingsForEveryRun` 验证基础请求的 `Sync.DryRun` 与 `SnipeIt.DryRun` 固定为 `false`，且 reader 不再提供独立 dry-run load API。
+- `ScheduledSyncRequestFactoryTests.CreateScheduledRequest_ForcesRealScheduledTriggerAndDisablesManualPreflightCsv` 故意传入两个 `DryRun = true` 的基础值，验证 scheduled clone 强制改为 `false`、保留 `TriggeredBy = scheduled`，并禁用 manual preflight CSV。
+- `WorkerSchedulerTests.RunScheduledSyncAsync_ReloadsRuntimeForEachRun_AndForcesScheduledRequest` 验证每个实际交给 orchestrator 的 scheduled request 都是非 dry-run。
+- `ManualSyncRequestFactoryTests` 继续验证 Preview 固定 dry-run、Sync Now 固定真实运行，防止删除配置开关时破坏 Preview 的无写入边界。
+
+所有测试使用 fake orchestrator、临时文件和拒绝网络的 HTTP handler，不调用真实 Atera 或 Snipe-IT API。

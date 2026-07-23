@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
@@ -20,12 +20,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AteraSnipeSync.Core\AteraSnipeSync.Core.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Compile Include="..\..\src\AteraSnipeSync.TrayApp\DailyLogWriter.cs" Link="TrayApp\DailyLogWriter.cs" />
-    <Compile Include="..\..\src\AteraSnipeSync.TrayApp\ManualSyncProgressCalculator.cs" Link="TrayApp\ManualSyncProgressCalculator.cs" />
-    <Compile Include="..\..\src\AteraSnipeSync.TrayApp\ManualSyncUiStageTracker.cs" Link="TrayApp\ManualSyncUiStageTracker.cs" />
+    <ProjectReference Include="..\..\src\AteraSnipeSync.TrayApp\AteraSnipeSync.TrayApp.csproj" />
+    <ProjectReference Include="..\..\src\AteraSnipeSync.WorkerService\AteraSnipeSync.WorkerService.csproj" />
   </ItemGroup>
 
 </Project>

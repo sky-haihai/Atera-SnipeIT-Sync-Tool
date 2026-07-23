@@ -442,8 +442,7 @@ New-Item samples\configs\appsettings.local.example.json -ItemType File
     "DefaultStatusId": 2
   },
   "Sync": {
-    "IntervalMinutes": 30,
-    "DryRun": true
+    "IntervalMinutes": 30
   },
   "Notifications": {
     "Enabled": false,
@@ -500,12 +499,6 @@ Atera API Key
 Snipe-IT Base URL
 Snipe-IT API Token
 Default Status ID
-```
-
-第一版建议默认：
-
-```json
-"DryRun": true
 ```
 
 ---

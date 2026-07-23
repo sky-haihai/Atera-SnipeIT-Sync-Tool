@@ -2,14 +2,29 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AteraSnipeSync.Core\AteraSnipeSync.Core.csproj" />
+    <PackageReference Include="AntdUI" Version="2.4.3" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
   </ItemGroup>
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <ApplicationIcon>Assets\tray-icon.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <RuntimeFrameworkVersion>10.0.10</RuntimeFrameworkVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AteraSnipeSync.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\tray-icon.ico"
+                      LogicalName="AteraSnipeSync.TrayApp.Assets.tray-icon.ico" />
+  </ItemGroup>
 
 </Project>
