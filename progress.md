@@ -2,6 +2,45 @@
 
 Last updated: 2026-07-23
 
+## 2026-07-23 Preview excluded from Latest run
+
+Production code changed:
+
+- changed Dashboard terminal rendering so a `DryRun = true` Preview still updates Current activity and the manual log but does not replace Latest run time/counts.
+- changed Worker-status rendering to accept only non-dry-run snapshots for Latest run. If Worker is offline, has no latest result, or reports Preview as newest, Dashboard now uses the latest real-sync history fallback.
+- changed the read-only local history reader to scan newest-first, skip Preview/missing-dry-run/malformed candidates, and return the first valid `dryRun = false` summary.
+
+Automated tests changed:
+
+- added history-reader coverage for newest Preview fallback, malformed-newest fallback, and Preview-only null results; existing count/default-deleted fixtures now explicitly represent real sync.
+- added an STA Dashboard regression that renders real Sync followed by Preview and verifies Latest run labels stay identical while Current activity receives the Preview outcome.
+- all tests use temporary local files and a non-connected test pipe; no real Atera or Snipe-IT API was called.
+
+Documentation changed:
+
+- updated the TrayApp functional responsibilities and technical specification before production code with the real-sync-only Latest run boundary and fallback algorithm.
+- updated the TrayApp unit-test guide after implementation with the actual automated and manual acceptance paths.
+
+Verification commands:
+
+```powershell
+dotnet test tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj --no-restore --filter "FullyQualifiedName~LatestSyncHistoryReaderTests|FullyQualifiedName~DashboardLayoutTests" --logger "console;verbosity=minimal"
+dotnet build AteraSnipeSync.sln --no-restore --nologo
+dotnet test AteraSnipeSync.sln --no-build --no-restore --nologo --logger "console;verbosity=minimal"
+```
+
+Latest known result:
+
+```text
+Focused TrayApp tests: 8 passed, 0 failed, 0 skipped
+Build: succeeded, 0 warnings, 0 errors
+Full solution tests: 329 passed, 0 failed, 0 skipped
+```
+
+Remaining module gaps / next steps:
+
+- manually run Sync Now followed by Preview on the deployed TrayApp and confirm Current activity changes while Latest run retains the real-sync timestamp/counts. Real credentials must stay local and must not be printed, logged, or committed.
+
 ## 2026-07-23 Notification deleted count projection
 
 Production code changed:

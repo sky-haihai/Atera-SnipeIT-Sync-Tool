@@ -1024,3 +1024,20 @@ Add `tests/AteraSnipeSync.Tests/TrayApp/TrayIconLoaderTests.cs` to verify offlin
 - `TrayIconLoader.Load()` returns a usable caller-owned icon containing opaque blue pixels and can be disposed normally.
 
 The build itself must succeed with `ApplicationIcon` enabled. Manual acceptance must inspect the rebuilt `AteraSnipeSync.TrayApp.exe` in Explorer and the running notification-area icon on both light and dark taskbars; no real Worker, SCM, Atera or Snipe-IT call is required.
+
+## 2026-07-23 Latest run excludes Preview specification
+
+`TrayDashboardForm.RunTrayCommandAsync` must continue rendering every terminal `WorkerSyncResultSummary` into Current activity and the manual log. `RenderSyncResult` must update the `Latest run` controls only when `result.DryRun == false`; a Preview terminal result must not call `SetLatestRun`.
+
+`RenderSystemState` must use `WorkerStatusSnapshot.LatestSync` only when `LatestSync.DryRun == false`. When the Worker is offline, has no latest snapshot, or exposes a dry-run latest snapshot, `RefreshSystemStateAsync` must call `LatestSyncHistoryReader.ReadSummaryAsync` and use its result as the Latest run fallback. Rename the field that carries this fallback so its name does not imply offline-only use.
+
+`LatestSyncHistoryReader.ReadSummaryAsync` must enumerate controlled `SyncResult_*.json` files newest-first and return the first valid document whose `run.dryRun` property exists and is JSON `false`. It must skip dry-run documents, malformed documents, documents missing the required run/summary structure, and legacy documents without an explicit `dryRun` flag. A malformed or Preview newest file must not prevent a valid older real sync from being selected. The reader remains read-only and catches bounded local file/JSON failures per candidate without contacting Worker or either external API.
+
+Required regression tests:
+
+- newest Preview followed by an older real sync returns the older real-sync timestamp/counts;
+- a malformed candidate does not prevent selecting an older valid real sync;
+- history containing only Preview returns null;
+- existing count projection and missing-deleted default behavior remain covered using explicit `dryRun: false` fixtures.
+
+Manual acceptance: run Sync Now once, note Latest run, then run Preview. Current activity must show the Preview outcome while Latest run retains the earlier real-sync timestamp/counts. Restart TrayApp and repeat with Worker offline; the same real sync must remain visible. No real API execution is part of automated verification.

@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Windows.Forms;
 using AteraSnipeSync.Core.Configuration;
 using AteraSnipeSync.Core.Notifications;
+using AteraSnipeSync.Core.Runtime.Ipc;
 using AteraSnipeSync.Core.Runtime.Windows;
 using AteraSnipeSync.TrayApp;
 using AntButton = AntdUI.Button;
@@ -67,6 +68,30 @@ public sealed class DashboardLayoutTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "Configuration navigation test thread timed out.");
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+    }
+
+    [Fact]
+    public void PreviewResult_DoesNotReplaceLatestRun()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                VerifyPreviewDoesNotReplaceLatestRun();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20)), "Latest run Preview regression test timed out.");
         if (failure is not null)
         {
             ExceptionDispatchInfo.Capture(failure).Throw();
@@ -258,6 +283,80 @@ public sealed class DashboardLayoutTests
         Assert.Single(observedSizes.Values.Distinct());
         return observedSizes;
     }
+
+    /// <summary>
+    /// Renders a real sync followed by Preview and proves only Current activity changes for the dry-run result.
+    /// </summary>
+    private static void VerifyPreviewDoesNotReplaceLatestRun()
+    {
+        var testRoot = Path.Combine(Path.GetTempPath(), "AteraSnipeSyncTests", Guid.NewGuid().ToString("N"));
+        var writer = new DailyLogWriter(testRoot);
+        try
+        {
+            using var form = new TrayDashboardForm(
+                new LocalAppSettingsStore(Path.Combine(testRoot, LocalAppSettingsStore.DefaultFileName)),
+                new WorkerIpcClient("preview-latest-run-test-pipe", TimeSpan.FromMilliseconds(50)),
+                new FakeServiceStatusReader(),
+                new WorkerServiceMaintenanceLauncher(
+                    () => Path.Combine(testRoot, "worker.exe"),
+                    (_, _) => Task.FromResult(0)),
+                writer);
+            var latestRunCard = Assert.Single(
+                Descendants<AntPanel>(form),
+                card => CardTitle(card) == "Latest run");
+            var renderSyncResult = typeof(TrayDashboardForm).GetMethod(
+                "RenderSyncResult",
+                BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException("TrayDashboardForm.RenderSyncResult was not found.");
+
+            renderSyncResult.Invoke(form, [CreateSyncResult(dryRun: false, 1, 2, 3, 4)]);
+            var latestRealRunLabels = Descendants<AntLabel>(latestRunCard)
+                .Select(label => label.Text)
+                .ToArray();
+
+            renderSyncResult.Invoke(form, [CreateSyncResult(dryRun: true, 91, 92, 93, 94)]);
+            var labelsAfterPreview = Descendants<AntLabel>(latestRunCard)
+                .Select(label => label.Text)
+                .ToArray();
+
+            Assert.Equal(latestRealRunLabels, labelsAfterPreview);
+            Assert.DoesNotContain("91", labelsAfterPreview);
+            Assert.Contains(
+                Descendants<AntLabel>(form),
+                label => label.Text == "Completed. 0 warning(s); details are available in Logs.");
+        }
+        finally
+        {
+            writer.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+    }
+
+    /// <summary>
+    /// Creates a sanitized terminal result used only by the local Latest run rendering regression.
+    /// </summary>
+    private static WorkerSyncResultSummary CreateSyncResult(
+        bool dryRun,
+        int created,
+        int updated,
+        int noChange,
+        int deleted)
+        => new()
+        {
+            Success = true,
+            StartedAt = new DateTimeOffset(2026, 7, 23, 12, 0, 0, TimeSpan.Zero),
+            FinishedAt = new DateTimeOffset(2026, 7, 23, dryRun ? 13 : 12, 5, 0, TimeSpan.Zero),
+            DryRun = dryRun,
+            Cancelled = false,
+            Pulled = 10,
+            Mapped = 10,
+            Created = created,
+            Updated = updated,
+            Deleted = deleted,
+            Skipped = noChange,
+            Failed = 0,
+            WarningCount = 0,
+            Failures = []
+        };
 
     /// <summary>
     /// Exercises Dashboard-to-configuration navigation twice on one form and raises the real Cancel button click between visits.

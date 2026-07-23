@@ -52,7 +52,7 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
         ActiveCommandCanCancel: false);
     private WorkerStatusSnapshot? _latestWorkerStatus;
     private string? _activeRequestId;
-    private LatestSyncHistorySummary? _offlineHistorySummary;
+    private LatestSyncHistorySummary? _latestRealHistorySummary;
     private long _refreshGeneration;
     private int _refreshInProgress;
     private bool _allowClose;
@@ -146,7 +146,7 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
             // A refresh failure is represented as Worker Offline and does not terminate TrayApp.
         }
 
-        var offlineSummary = workerOnline
+        var latestRealHistorySummary = workerStatus?.LatestSync is { DryRun: false }
             ? null
             : await LatestSyncHistoryReader
                 .ReadSummaryAsync(ControlledPathValidator.HistoryRoot, cancellationToken)
@@ -158,7 +158,7 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
         }
 
         _latestWorkerStatus = workerStatus;
-        _offlineHistorySummary = offlineSummary;
+        _latestRealHistorySummary = latestRealHistorySummary;
         _state = _state with
         {
             ServiceState = serviceState,
@@ -726,7 +726,7 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
         _nextRun.Text = TrayStatusFormatter.FormatNextRun(_latestWorkerStatus?.NextRunUtc, TimeZoneInfo.Local);
         ApplyStatusColors();
 
-        if (_latestWorkerStatus?.LatestSync is { } latest)
+        if (_latestWorkerStatus?.LatestSync is { DryRun: false } latest)
         {
             SetLatestRun(
                 latest.LastRunFinishedAt is null
@@ -737,16 +737,16 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
                 latest.Skipped,
                 latest.Deleted);
         }
-        else if (_offlineHistorySummary is not null)
+        else if (_latestRealHistorySummary is not null)
         {
             SetLatestRun(
-                _offlineHistorySummary.FinishedAtUtc is null
-                    ? "Loaded from local history while Worker is offline"
-                    : $"Finished {_offlineHistorySummary.FinishedAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss} · local history",
-                _offlineHistorySummary.Created,
-                _offlineHistorySummary.Updated,
-                _offlineHistorySummary.NoChange,
-                _offlineHistorySummary.Deleted);
+                _latestRealHistorySummary.FinishedAtUtc is null
+                    ? "Loaded from local sync history"
+                    : $"Finished {_latestRealHistorySummary.FinishedAtUtc.Value.ToLocalTime():yyyy-MM-dd HH:mm:ss} · local history",
+                _latestRealHistorySummary.Created,
+                _latestRealHistorySummary.Updated,
+                _latestRealHistorySummary.NoChange,
+                _latestRealHistorySummary.Deleted);
         }
     }
 
@@ -757,12 +757,15 @@ public sealed class TrayDashboardForm : AntdUI.BorderlessForm
             : result.Success
                 ? "Completed"
                 : "Failed";
-        SetLatestRun(
-            $"Finished {result.FinishedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
-            result.Created,
-            result.Updated,
-            result.Skipped,
-            result.Deleted);
+        if (!result.DryRun)
+        {
+            SetLatestRun(
+                $"Finished {result.FinishedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}",
+                result.Created,
+                result.Updated,
+                result.Skipped,
+                result.Deleted);
+        }
         _message.Text = $"{outcome}. {result.WarningCount} warning(s); details are available in Logs.";
 
         WriteManualLog(

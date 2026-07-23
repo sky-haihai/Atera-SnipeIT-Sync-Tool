@@ -531,3 +531,12 @@ Configuration 不再创建 modal 或第二个 top-level WinForms window。Operat
 - 图标替换不改变 single-instance、context menu、Dashboard、Worker IPC、SCM、配置或同步行为。
 
 成功条件：新构建的 EXE、Windows Explorer/快捷方式以及通知区使用同一蓝色“设备资产 + 双向同步”图标；离线自动化验证资源存在、ICO 帧目录完整并可由 `System.Drawing.Icon` 加载，且不调用任何外部服务。
+
+## 2026-07-23 Preview 不占用 Latest run
+
+- `Latest run` 只代表最近一次真实写入模式的 Sync Now 或 scheduled sync；`DryRun = true` 的 Preview 不能替换该卡片的完成时间或四项计数。
+- Preview 的 terminal result 仍更新 `Current activity`、进度、结果消息和 manual log，并继续保存独立的本地历史/CSV 审核文件。
+- Worker 在线且其 newest status 是 Preview 时，Dashboard 必须从本地历史回退到最近一份有效的非 dry-run sync；Worker 离线时使用同一只读回退规则。
+- 如果历史中只有 Preview 或没有有效真实 sync，`Latest run` 保持未运行占位状态，不把 Preview 显示为真实 run。
+
+成功条件：完成 Preview 后，`Latest run` 继续显示 Preview 之前最近一次真实 sync；重启 TrayApp 或 Worker 离线后结果仍一致，且自动化测试只读取临时历史文件。

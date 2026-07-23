@@ -1,7 +1,7 @@
 namespace AteraSnipeSync.TrayApp;
 
 /// <summary>
-/// Carries the count-only latest-run data read from local history while Worker IPC is offline.
+/// Carries count-only latest-real-run data read from local history when Worker status cannot provide it.
 /// </summary>
 internal sealed class LatestSyncHistorySummary
 {
