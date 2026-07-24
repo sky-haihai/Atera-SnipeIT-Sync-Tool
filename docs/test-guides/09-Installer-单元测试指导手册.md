@@ -10,7 +10,7 @@ Installer 自动测试只读取 release metadata、WiX source、project 和 Powe
 
 `tests/AteraSnipeSync.Tests/Installer/InstallerContractTests.cs` 锁定：
 
-- ProductVersion `1.0.0`、Assembly/FileVersion `1.0.0.0`、Company/Manufacturer `Vue IT Inc.`。
+- ProductVersion `1.0.1`、AssemblyVersion `1.0.0.0`、FileVersion `1.0.1.0`、Company/Manufacturer `Vue IT Inc.`。
 - per-machine x64、UpgradeCode 和 build-time deterministic ProductCode input。
 - `AteraSnipeItAutoSync` 的 LocalSystem/automatic/start/stop/remove contract。
 - all-users Start Menu shortcut、HKLM Tray Run registration；shortcut 必须显式引用 `ProductIcon.exe`、`IconIndex=0`，Icon table PE source 与 ARP icon 必须使用同一 identifier。
@@ -82,9 +82,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 成功输出：
 
 ```text
-artifacts\release\v1.0.0\AteraSnipeSync-1.0.0-win-x64.msi
-artifacts\release\v1.0.0\AteraSnipeSync-1.0.0-win-x64.msi.sha256
-artifacts\release\v1.0.0\release-manifest.json
+artifacts\release\v1.0.1\AteraSnipeSync-1.0.1-win-x64.msi
+artifacts\release\v1.0.1\AteraSnipeSync-1.0.1-win-x64.msi.sha256
+artifacts\release\v1.0.1\release-manifest.json
 ```
 
 ## 5. MSI 静态与 administrative extraction 验收
@@ -100,7 +100,7 @@ msiexec.exe /a $msi TARGETDIR=$extractRoot /qn /norestart /L*v "$extractRoot.log
 验证：
 
 - 两个 EXE 位于同一个 `AteraSnipeSync` directory。
-- 两个 EXE 的 ProductVersion 为 `1.0.0`、FileVersion 为 `1.0.0.0`、CompanyName 为 `Vue IT Inc.`。
+- 两个 EXE 的 ProductVersion 为 `1.0.1`、FileVersion 为 `1.0.1.0`、CompanyName 为 `Vue IT Inc.`。
 - Tray EXE 和 MSI ARP icon 可读取；生成 MSI 的 Shortcut 表 `Icon_` 为 `ProductIcon.exe`、`IconIndex` 为 `0`，Icon 表包含同名 row。
 - extracted tree 不含 `*.pdb`、`appsettings.Development.json`、`appsettings.local.json`、`*.local.json`、test assembly 或真实 credential。
 - `.sha256` 与 `Get-FileHash -Algorithm SHA256` 一致。

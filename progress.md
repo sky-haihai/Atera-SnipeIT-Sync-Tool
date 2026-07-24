@@ -1,6 +1,39 @@
 # Project Progress
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
+
+## 2026-07-24 v1.0.1 release metadata
+
+Production/release code changed:
+
+- updated the shared ProductVersion/InformationalVersion to `1.0.1` and FileVersion to `1.0.1.0`; AssemblyVersion remains `1.0.0.0` for v1 binary compatibility.
+- updated `Build-Release.ps1` to default to `1.0.1`, derive FileVersion as `<release version>.0`, retain the stable AssemblyVersion, and validate/write those values in release artifacts and the manifest.
+
+Automated tests changed:
+
+- updated installer contract coverage for ProductVersion `1.0.1`, FileVersion `1.0.1.0`, stable AssemblyVersion `1.0.0.0`, and the release script's v1.0.1 defaults.
+- no automated test called the real Atera or Snipe-IT APIs.
+
+Documentation changed:
+
+- updated the English and Simplified Chinese READMEs with v1.0.1 MSI examples, linked VUE IT Inc. developer attribution, and a v1.0.1 disclaimer recommending a verified Snipe-IT Backup snapshot before use.
+- updated Installer module responsibilities, technical specification, and test guide for the v1.0.1 release metadata and artifact names.
+
+Verification commands run:
+
+- PowerShell parser validation of `scripts/Build-Release.ps1`: passed with no syntax errors.
+- `dotnet test .\tests\AteraSnipeSync.Tests\AteraSnipeSync.Tests.csproj -c Release --filter FullyQualifiedName~InstallerContractTests`: passed, 8/8.
+- `dotnet build .\AteraSnipeSync.sln -c Release --no-restore`: passed with 0 warnings and 0 errors.
+- `dotnet test .\AteraSnipeSync.sln -c Release --no-build --no-restore`: passed, 329/329.
+- inspected both Release executables with `FileVersionInfo`: ProductVersion `1.0.1`, FileVersion `1.0.1.0`, CompanyName `Vue IT Inc.`.
+
+Latest known result:
+
+- v1.0.1 metadata, release-script contracts, Release build, and the complete automated test suite pass locally.
+
+Remaining gaps / next steps:
+
+- no final MSI was produced from this dirty working tree; build the release artifact from the reviewed clean commit, then complete the documented Windows 11 and Windows Server 2022 install/upgrade/uninstall VM matrix before tagging v1.0.1.
 
 ## 2026-07-23 Preview excluded from Latest run
 

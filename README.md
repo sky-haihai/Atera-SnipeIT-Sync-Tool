@@ -4,12 +4,17 @@
 
 Atera Snipe-IT Auto Sync is a Windows asset synchronization tool. It pulls managed agents from Atera, converts device, customer, manufacturer, model, and hardware identity data into Snipe-IT asset records, and runs either on a Windows Service schedule or on demand from the Tray App.
 
+Developed by **[VUE IT Inc.](https://vueit.ca/)**
+
 Current version: `1.0.1`<br>
 Publisher: [VUE IT Inc.](https://vueit.ca/)<br>
 Platform: Windows x64
 
 > [!IMPORTANT]
 > `Sync Now` and enabled schedules make real changes in Snipe-IT, including soft-deleting `ATERA-` assets that have disappeared from Atera. Run `Preview` and review every generated CSV before first use, after changing mapping settings, and after an upgrade.
+
+> [!CAUTION]
+> **Disclaimer for v1.0.1:** This tool has only recently completed its initial v1.0.1 development and validation and may still contain undiscovered bugs. Incorrect matching, mapping, updates, or soft-deletes could create duplicate, mismatched, incorrectly linked, or missing inventory records in Snipe-IT. Use this software at your own risk. Before the first `Sync Now`, before enabling Schedule, and after every upgrade or mapping change, use Snipe-IT's Backup feature to create a complete restorable snapshot and verify that the backup can be restored. Always run and review `Preview` first; Preview is not a substitute for a backup.
 
 ## How it works
 
@@ -111,16 +116,16 @@ Back up Snipe-IT first, and complete at least one Preview and one small real syn
 The release directory contains:
 
 ```text
-AteraSnipeSync-1.0.0-win-x64.msi
-AteraSnipeSync-1.0.0-win-x64.msi.sha256
+AteraSnipeSync-1.0.1-win-x64.msi
+AteraSnipeSync-1.0.1-win-x64.msi.sha256
 release-manifest.json
 ```
 
 Calculate the hash in PowerShell and compare it with `.sha256` or `release-manifest.json`:
 
 ```powershell
-Get-FileHash -LiteralPath .\AteraSnipeSync-1.0.0-win-x64.msi -Algorithm SHA256
-Get-Content -LiteralPath .\AteraSnipeSync-1.0.0-win-x64.msi.sha256
+Get-FileHash -LiteralPath .\AteraSnipeSync-1.0.1-win-x64.msi -Algorithm SHA256
+Get-Content -LiteralPath .\AteraSnipeSync-1.0.1-win-x64.msi.sha256
 ```
 
 ### 2. Install the MSI
@@ -128,7 +133,7 @@ Get-Content -LiteralPath .\AteraSnipeSync-1.0.0-win-x64.msi.sha256
 Run from an elevated PowerShell or Windows Terminal:
 
 ```powershell
-msiexec.exe /i .\AteraSnipeSync-1.0.0-win-x64.msi /norestart
+msiexec.exe /i .\AteraSnipeSync-1.0.1-win-x64.msi /norestart
 ```
 
 After installation:
@@ -328,7 +333,7 @@ Logs, History, and IPC summaries avoid API tokens, raw HTTP payloads, and comple
 Uninstall `Atera Snipe-IT Auto Sync` from Windows Installed apps / Programs and Features, or run:
 
 ```powershell
-msiexec.exe /x .\AteraSnipeSync-1.0.0-win-x64.msi /norestart
+msiexec.exe /x .\AteraSnipeSync-1.0.1-win-x64.msi /norestart
 ```
 
 The uninstall dialog asks whether to delete:
@@ -344,13 +349,13 @@ The option is clear by default, so configuration, credentials, logs, history, Pr
 Preserve all local data:
 
 ```powershell
-msiexec.exe /x .\AteraSnipeSync-1.0.0-win-x64.msi /qn /norestart
+msiexec.exe /x .\AteraSnipeSync-1.0.1-win-x64.msi /qn /norestart
 ```
 
 Permanently remove the complete local data directory as well:
 
 ```powershell
-msiexec.exe /x .\AteraSnipeSync-1.0.0-win-x64.msi /qn /norestart REMOVELOCALDATA=1
+msiexec.exe /x .\AteraSnipeSync-1.0.1-win-x64.msi /qn /norestart REMOVELOCALDATA=1
 ```
 
 `REMOVELOCALDATA=1` applies only to a true uninstall. Major upgrades and repairs preserve local data even when this property is supplied.

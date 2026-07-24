@@ -9,7 +9,7 @@ Installer 模块负责把已经验证的 AteraSnipeSync WorkerService 与 TrayAp
 ## 2. 输入
 
 - clean 或显式允许 dirty 的 Git 工作树。
-- `Version`，v1.0 首发固定为 `1.0.0`。
+- `Version`，当前 patch release 为 `1.0.1`。
 - Release 配置的 WorkerService 与 TrayApp 项目。
 - 固定的产品 identity、service identity、安装路径和 ProgramData 路径。
 - WiX 7 SDK、UI extension 与 Util extension。
@@ -19,8 +19,8 @@ Installer 模块负责把已经验证的 AteraSnipeSync WorkerService 与 TrayAp
 
 发布命令必须生成：
 
-- `AteraSnipeSync-1.0.0-win-x64.msi`
-- `AteraSnipeSync-1.0.0-win-x64.msi.sha256`
+- `AteraSnipeSync-1.0.1-win-x64.msi`
+- `AteraSnipeSync-1.0.1-win-x64.msi.sha256`
 - `release-manifest.json`
 
 manifest 至少记录 version、RID、self-contained、Git commit、dirty 状态、MSI 文件名、SHA-256、Manufacturer 和签名状态。manifest 不得包含 API key、token、SMTP password、webhook URL 或 local config 内容。

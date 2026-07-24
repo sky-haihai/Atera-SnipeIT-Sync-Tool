@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.0.1',
 
     [Parameter()]
     [switch]$AllowDirty
@@ -10,6 +10,8 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$assemblyVersion = '1.0.0.0'
+$fileVersion = "$Version.0"
 
 function Invoke-DotNet {
     param(
@@ -158,6 +160,9 @@ function Assert-ReleaseArtifact {
         [bool]$ExpectedDirty
     )
 
+    $expectedAssemblyVersion = '1.0.0.0'
+    $expectedFileVersion = "$Version.0"
+
     $validationRoot = Reset-ArtifactDirectory `
         -RepositoryRoot $RepositoryRoot `
         -Path (Join-Path $RepositoryRoot "artifacts\.validation\v$Version")
@@ -196,7 +201,7 @@ function Assert-ReleaseArtifact {
 
     foreach ($executable in @($workerExecutable, $trayExecutable)) {
         if ($executable.VersionInfo.ProductVersion -ne $Version -or
-            $executable.VersionInfo.FileVersion -ne '1.0.0.0' -or
+            $executable.VersionInfo.FileVersion -ne $expectedFileVersion -or
             $executable.VersionInfo.CompanyName -ne 'Vue IT Inc.') {
             throw "Unexpected version/company metadata in $($executable.Name)."
         }
@@ -236,8 +241,8 @@ function Assert-ReleaseArtifact {
 
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
     if ($manifest.version -ne $Version -or
-        $manifest.assemblyVersion -ne '1.0.0.0' -or
-        $manifest.fileVersion -ne '1.0.0.0' -or
+        $manifest.assemblyVersion -ne $expectedAssemblyVersion -or
+        $manifest.fileVersion -ne $expectedFileVersion -or
         $manifest.runtimeIdentifier -ne 'win-x64' -or
         -not $manifest.selfContained -or
         $manifest.manufacturer -ne 'Vue IT Inc.' -or
@@ -305,8 +310,8 @@ try {
         "-p:Version=$Version",
         "-p:InformationalVersion=$Version",
         '-p:IncludeSourceRevisionInInformationalVersion=false',
-        '-p:AssemblyVersion=1.0.0.0',
-        '-p:FileVersion=1.0.0.0'
+        "-p:AssemblyVersion=$assemblyVersion",
+        "-p:FileVersion=$fileVersion"
     )
 
     Invoke-DotNet -Arguments (@('publish', $workerProject, '--output', $workerPublish) + $publishProperties)
@@ -372,8 +377,8 @@ $manifestPath = Join-Path $releaseRoot 'release-manifest.json'
 $manifest = [ordered]@{
     product = 'Atera Snipe-IT Auto Sync'
     version = $Version
-    assemblyVersion = '1.0.0.0'
-    fileVersion = '1.0.0.0'
+    assemblyVersion = $assemblyVersion
+    fileVersion = $fileVersion
     runtimeIdentifier = 'win-x64'
     selfContained = $true
     manufacturer = 'Vue IT Inc.'

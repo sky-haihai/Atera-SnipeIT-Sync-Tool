@@ -14,14 +14,14 @@ public sealed class InstallerContractTests
     private static readonly string RepositoryRoot = FindRepositoryRoot();
 
     [Fact]
-    public void BuildMetadata_IsFixedForVersionOneRelease()
+    public void BuildMetadata_UsesCurrentPatchVersionAndStableMajorAssemblyVersion()
     {
         var document = LoadXml("Directory.Build.props");
 
-        Assert.Equal("1.0.0", ElementValue(document, "VersionPrefix"));
+        Assert.Equal("1.0.1", ElementValue(document, "VersionPrefix"));
         Assert.Equal("1.0.0.0", ElementValue(document, "AssemblyVersion"));
-        Assert.Equal("1.0.0.0", ElementValue(document, "FileVersion"));
-        Assert.Equal("1.0.0", ElementValue(document, "InformationalVersion"));
+        Assert.Equal("1.0.1.0", ElementValue(document, "FileVersion"));
+        Assert.Equal("1.0.1", ElementValue(document, "InformationalVersion"));
         Assert.Equal("false", ElementValue(document, "IncludeSourceRevisionInInformationalVersion"));
         Assert.Equal("Vue IT Inc.", ElementValue(document, "Company"));
         Assert.Equal("Atera Snipe-IT Auto Sync", ElementValue(document, "Product"));
@@ -138,6 +138,8 @@ public sealed class InstallerContractTests
         var script = File.ReadAllText(Path.Combine(RepositoryRoot, "scripts", "Build-Release.ps1"));
 
         Assert.Contains("[switch]$AllowDirty", script, StringComparison.Ordinal);
+        Assert.Contains("[string]$Version = '1.0.1'", script, StringComparison.Ordinal);
+        Assert.Contains("$fileVersion = \"$Version.0\"", script, StringComparison.Ordinal);
         Assert.Contains("status --porcelain=v1", script, StringComparison.Ordinal);
         Assert.Contains("--self-contained", script, StringComparison.Ordinal);
         Assert.Contains("-p:PublishSingleFile=false", script, StringComparison.Ordinal);
