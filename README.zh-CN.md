@@ -4,8 +4,6 @@
 
 Atera Snipe-IT Auto Sync 是一个面向 Windows 的设备资产同步工具。它从 Atera 拉取 managed agents，将设备、客户、厂商、型号和硬件身份信息转换为 Snipe-IT 资产记录，然后通过 Windows Service 定时同步，或由管理员在 Tray App 中手动 Preview / Sync。
 
-由 **[VUE IT Inc.](https://vueit.ca/)** 开发
-
 当前版本：`1.0.1`<br>
 发行方：[VUE IT Inc.](https://vueit.ca/)<br>
 运行平台：Windows x64
