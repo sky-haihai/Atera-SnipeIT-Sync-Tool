@@ -6,7 +6,7 @@ Atera Snipe-IT Auto Sync is a Windows asset synchronization tool. It pulls manag
 
 Developed by **[VUE IT Inc.](https://vueit.ca/)**
 
-Current version: `1.0.0`<br>
+Current version: `1.0.1`<br>
 Publisher: [VUE IT Inc.](https://vueit.ca/)<br>
 Platform: Windows x64
 
