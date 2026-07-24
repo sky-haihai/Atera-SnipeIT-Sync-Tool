@@ -26,14 +26,16 @@ Verification commands run:
 - `dotnet build .\AteraSnipeSync.sln -c Release --no-restore`: passed with 0 warnings and 0 errors.
 - `dotnet test .\AteraSnipeSync.sln -c Release --no-build --no-restore`: passed, 329/329.
 - inspected both Release executables with `FileVersionInfo`: ProductVersion `1.0.1`, FileVersion `1.0.1.0`, CompanyName `Vue IT Inc.`.
+- `.\scripts\Build-Release.ps1 -Version 1.0.1`: passed from clean commit `707e8cfc609df3ec7b6a3d9cce7ca24ee59d83e1`; the pipeline repeated locked restore, Release build, 329/329 tests, self-contained publish, WiX packaging, administrative extraction, and artifact validation.
+- independently recalculated the MSI SHA-256 and confirmed it matches both the `.sha256` sidecar and `release-manifest.json`: `8aa7c98fe47a1058ba2cf85fd976b2af8d5b712a795f9107f440f72815ce20e3`.
 
 Latest known result:
 
-- v1.0.1 metadata, release-script contracts, Release build, and the complete automated test suite pass locally.
+- final unsigned v1.0.1 artifact generated at `artifacts/release/v1.0.1/AteraSnipeSync-1.0.1-win-x64.msi` (42,220,920 bytes), with matching SHA-256 sidecar and release manifest.
 
 Remaining gaps / next steps:
 
-- no final MSI was produced from this dirty working tree; build the release artifact from the reviewed clean commit, then complete the documented Windows 11 and Windows Server 2022 install/upgrade/uninstall VM matrix before tagging v1.0.1.
+- the MSI is unsigned; code signing and the documented Windows 11 / Windows Server 2022 install, upgrade, repair, and uninstall VM matrix remain before tagging v1.0.1 for production distribution.
 
 ## 2026-07-23 Preview excluded from Latest run
 
